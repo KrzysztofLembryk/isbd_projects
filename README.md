@@ -8,7 +8,7 @@
 - repo: https://github.com/antoniosarosi/mkdb
 
 ## VLE alg
-https://github.com/r-lyeh-archived/vle/blob/master/vle.hpp
+- https://github.com/r-lyeh-archived/vle/blob/master/vle.hpp
 
 ## PARGQUET - column oriented file format
 - https://github.com/apache/parquet-format/blob/apache-parquet-format-2.12.0/README.md
@@ -19,3 +19,6 @@ https://github.com/r-lyeh-archived/vle/blob/master/vle.hpp
 
 ## SQLITE Source code - impl for code reading
 - https://github.com/antoniosarosi/sqlite2-btree-visualizer/tree/master
+
+## sqlite header format
+- https://www.sqlite.org/fileformat2.html#database_header

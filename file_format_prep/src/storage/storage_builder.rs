@@ -47,7 +47,7 @@ pub fn read_csv(file_path: &str, delim: u8)
                         .delimiter(delim)
                         .from_reader(file);
 
-    println!("{:?}", rdr.headers().unwrap());
+    println!("col types: {:?}", rdr.headers().unwrap());
 
     // first row needs to have types: 's' or 'i', thus they are headers
     let headers = rdr.headers().unwrap().clone();
@@ -76,6 +76,17 @@ pub fn read_csv(file_path: &str, delim: u8)
                                         .iter()
                                         .map(|x| x.to_string())
                                         .collect();
+            println!("checking for 0 at the end of string");
+            for c in names.get(0).unwrap().chars()
+            {
+                print!("{c}");
+                // Rust uses a pointer+length encoding, and there is no guarantee that there will be a null byte after the end of the buffer
+                if c == '\0'
+                {
+                    println!("IN read string there is '0' at the end of it");
+                }
+            }
+            println!();
             for idx in 0..types_vec.len()
             {
                 types_names_vec.push(
