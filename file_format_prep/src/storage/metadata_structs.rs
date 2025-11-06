@@ -17,7 +17,8 @@ enum ReadStages {
     FilesCountStage,    // this is u8 stage 
     ColTypesStage,      // this is u8 stage too; values we read are only u8
     ColNameStage,       // these are String stages, and we read strings of 
-    FilePathStage       // any length
+    FilePathStage,       // any length
+    EndedReading
 }
 
 pub struct DbMetadata
@@ -126,7 +127,6 @@ impl  DbMetadata  {
         let mut col_names: Vec<String> = vec![];
         let mut col_files_paths: HashMap<String, Vec<String>> = HashMap::new();
         let mut curr_stage = ReadStages::InitStage;
-        let mut temp_str: String = String::new();
 
         loop 
         {
@@ -135,17 +135,27 @@ impl  DbMetadata  {
             
             if bytes_read == 0
             {
-                println!("DbMetadata - read_from_file - Read 0 bytes, breaking");
+                if curr_stage != ReadStages::EndedReading
+                {
+                    return Err(io_err_wrapper("There was to little data in file"));
+                }
+
+                println!("DbMetadata - read_from_file - SUCCESS, Read 0 bytes, breaking");
                 break;
             }
 
             if curr_stage == ReadStages::InitStage
             {
-                curr_stage = init_stage_read_metadata(bytes_read, 
+                curr_stage = read_metadata_init_stage(bytes_read, 
                                                             &buf, 
                                                             &mut magic_word, 
                                                             &mut col_count)?;
                 curr_buf_idx = 6;
+
+                // We know how many columns we will have, so we can create as
+                // many empty strings in our vector that will store col names.
+                // Doing this will boost our code a little faster.
+                init_col_names(&mut col_names, col_count);
             }
 
             if curr_stage == ReadStages::FilesCountStage
@@ -174,49 +184,31 @@ impl  DbMetadata  {
             
             if curr_stage == ReadStages::ColNameStage
             {
-                // eos = end of string
-                // this variable checks if we encountered null termination of 
-                // string for current column, if not, we need to read more data
-                let mut eos_present = false;
-
-                while progress_idx < col_count as usize
+                curr_stage = read_metadata_str_stage(
+                                                    bytes_read, 
+                                                    &buf, 
+                                                    col_count, 
+                                                    &mut curr_buf_idx, 
+                                                    &mut progress_idx, 
+                                                    &mut col_names, 
+                                                    ReadStages::ColNameStage)?;
+                
+                if curr_stage == ReadStages::FilePathStage
                 {
-                    if curr_buf_idx >= bytes_read
-                    {
-                        continue;
-                    }
-                    
-                    loop
-                    {
-                        if curr_buf_idx >= bytes_read
-                        {
-                            break;
-                        }
-
-                        let c = buf[curr_buf_idx];
-
-                        if c == b'\0'
-                        {
-                            eos_present = true;
-                            col_names.push(temp_str.clone());
-                            temp_str.clear();
-                            break;
-                        }
-                        else 
-                        {
-                            // temp_str.push(c as char);
-                            col_names.get_mut(progress_idx).unwrap().push(c as char);
-                        }
-
-
-                        curr_buf_idx += 1;
-                    }
-                    if !eos_present
-                    {
-                        // means that curr_buf_idx >= bytes_read and we need
-                        // to read another portion of bytes into buf
-                    }
+                    // When we change stage, we can initialize hash map that 
+                    // that will store file paths to files that will store 
+                    // columns' data
+                    init_files_paths(
+                        &col_names, 
+                        &mut col_files_paths, 
+                        &col_files_count
+                    );
                 }
+            }
+
+            if curr_stage == ReadStages::FilePathStage
+            {
+
             }
         }
 
@@ -226,6 +218,72 @@ impl  DbMetadata  {
             col_types, 
             col_names, 
             col_files_paths))
+    }
+}
+
+fn read_metadata_str_stage(
+    bytes_read: usize, 
+    buf: &[u8], 
+    col_count: u16,
+    curr_buf_idx: &mut usize,
+    progress_idx: &mut usize,
+    res: &mut Vec<String>, 
+    stage: ReadStages
+) -> Result<ReadStages, io_err>
+{
+    // eos = end of string
+    // this variable checks if we encountered null termination of 
+    // string for current column, if not, we need to read more data
+    let mut eos_present = false;
+    let col_count = col_count as usize;
+
+    while *progress_idx < col_count 
+    {
+        let col_name = res.get_mut(*progress_idx).unwrap();
+
+        loop
+        {
+            if *curr_buf_idx >= bytes_read
+            {
+                break;
+            }
+
+            let c = buf[*curr_buf_idx];
+
+            if c == b'\0'
+            {
+                eos_present = true;
+                break;
+            }
+
+            col_name.push(c as char);
+            *curr_buf_idx += 1;
+        }
+
+        if !eos_present
+        {
+            // means that curr_buf_idx >= bytes_read and we need
+            // to read another portion of bytes into buf
+            return Ok(stage);
+        }
+
+        eos_present = false;
+        *progress_idx += 1;
+    }
+
+    *progress_idx = 0;
+
+    if stage == ReadStages::ColNameStage 
+    {
+        Ok(ReadStages::FilePathStage)
+    }
+    else if stage == ReadStages::FilePathStage
+    {
+        Ok(ReadStages::EndedReading)
+    }
+    else 
+    {
+        Err(io_err_wrapper("DbMetadata - read_metadata_str_stage got unsopported stage"))
     }
 }
 
@@ -276,7 +334,7 @@ fn read_metadata_u8_stage(
     }
 }
 
-fn init_stage_read_metadata(
+fn read_metadata_init_stage(
     bytes_read: usize, 
     buf: &[u8], 
     magic_word: &mut u32,
@@ -311,24 +369,41 @@ fn init_stage_read_metadata(
     Ok(ReadStages::FilesCountStage)
 }
 
+fn init_files_paths(
+    col_names: &Vec<String>, 
+    col_files_paths: &mut  HashMap<String, Vec<String>>,
+    col_files_count: &Vec<u8>
+)
+{
+    // Once we know names of columns, we can initialize 
+    // our hash map that stores all file paths for each column 
+    for (id, name) in col_names.iter().enumerate()
+    {
+        col_files_paths.insert(
+            name.clone(), 
+            // Here we create a vector of EMPTY strings, number of strings 
+            // in each vector equals to previously read file_count for given 
+            // column
+            vec![
+                String::new(); 
+                *col_files_count.get(id).unwrap() as usize
+                ]
+        );
+    }
+}
+
+fn init_col_names(col_names: &mut Vec<String>, col_count: u16)
+{
+    for _ in 0..col_count
+    {
+        // We initialise vector of names of column, so that we can
+        // push read chars right into these strings, instead of 
+        // making temp_str and then cloning it 
+        col_names.push(String::new());
+    }
+}
+
 fn io_err_wrapper(msg: &str) -> io_err
 {
     io_err::new(io_errkind::Other, msg)
-}
-
-pub struct ColHeader
-{
-    magic_word: u32,    // magic word saying that this is our db file
-    col_id: u16,        // we will have probably many files for one column, so 
-                        // this is just to make sure we read correct column
-    // file_seq_id: u16,// tells us in which file in sequence we are 
-    col_type: u8,       // either 'i' or 's'
-    is_overflow: bool,  // tells us if there are more files with this col data
-    size_of_data: u32,  // size of data without metadata
-}
-
-pub struct ColData
-{
-    h: ColHeader,
-    data: Vec<u8>
 }
