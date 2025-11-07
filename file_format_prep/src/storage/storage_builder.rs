@@ -29,7 +29,7 @@ fn create_cell(data: &Vec<i64>) -> Cell
 }
 
 pub fn read_csv(file_path: &str, delim: u8) 
-    -> (Vec<(String, String)> , Vec<Vec<String>>)
+    -> (Vec<u8>, Vec<String> , Vec<Vec<String>>)
 {
     /// CSV file as first row needs to have types: 's' or 'i'
     /// as second row column names
@@ -47,14 +47,19 @@ pub fn read_csv(file_path: &str, delim: u8)
                         .delimiter(delim)
                         .from_reader(file);
 
-    println!("col types: {:?}", rdr.headers().unwrap());
 
     // first row needs to have types: 's' or 'i', thus they are headers
     let headers = rdr.headers().unwrap().clone();
     let types_vec = Vec::from_iter(headers.iter());
+    let types_vec: Vec<u8> = types_vec.iter().map(|x| {
+            if *x == "s" {1}
+            else if *x == "i" {0}
+            else{2} // unsuppoorted type
+        })
+        .collect();
 
-    let mut types_names_vec: Vec<(String, String)> = Vec::new();
     let mut columns: Vec<Vec<String>> = Vec::new();
+    let mut col_names: Vec<String> = Vec::new();
 
     let n_cols = types_vec.len();
 
@@ -71,30 +76,11 @@ pub fn read_csv(file_path: &str, delim: u8)
         // col names are in first row
         if is_col_names
         {
-            let names: Vec<String> = result
-                                        .unwrap()
-                                        .iter()
-                                        .map(|x| x.to_string())
-                                        .collect();
-            println!("checking for 0 at the end of string");
-            for c in names.get(0).unwrap().chars()
-            {
-                print!("{c}");
-                // Rust uses a pointer+length encoding, and there is no guarantee that there will be a null byte after the end of the buffer
-                if c == '\0'
-                {
-                    println!("IN read string there is '0' at the end of it");
-                }
-            }
-            println!();
-            for idx in 0..types_vec.len()
-            {
-                types_names_vec.push(
-                    (
-                        types_vec.get(idx).unwrap().to_string(), 
-                        names.get(idx).unwrap().to_string()
-                    ));
-            }
+            col_names = result
+                            .unwrap()
+                            .iter()
+                            .map(|x| x.to_string())
+                            .collect();
             is_col_names = false;
         }
         else 
@@ -113,5 +99,5 @@ pub fn read_csv(file_path: &str, delim: u8)
             }
         }
     }
-    (types_names_vec, columns)
+    (types_vec, col_names, columns)
 }
