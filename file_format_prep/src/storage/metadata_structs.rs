@@ -1,13 +1,17 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::vec;
+use regex::Regex;
 
 use std::io::Error as io_err;
 use std::io::ErrorKind as io_errkind;
 
 pub const MAGIC_WORD: u32 = 0xF1FAA;
+pub const DB_DATA_DIR: &str = "./db_data";
 const METADATA_INIT_STAGE_SIZE: usize = 6;
+const AFTER_INIT_STAGE_BUFF_IDX: usize = 6;
 // 2^16 bytes buffer, we don't expect metadata file to be big
 const BUFF_SIZE: usize = 65535;
 
@@ -43,22 +47,66 @@ pub struct DbMetadata
 }
 
 impl  DbMetadata  {
-    pub fn new(
+    pub fn new_all_data(
         col_count: u16, 
         col_files_count: Vec<u8>,
         col_types: Vec<u8>,
         col_names: Vec<String>,
         col_files_paths: HashMap<String, Vec<String>>
-    ) -> DbMetadata
+    ) -> Result<DbMetadata, io_err>
     {
-        DbMetadata { 
+        check_metadata_correctness(
+            col_count as usize, 
+            &col_files_count, 
+            &col_types, 
+            &col_names, 
+            &col_files_paths)?;
+
+        Ok(DbMetadata { 
             magic_word: MAGIC_WORD, 
             col_count, 
             col_files_count, 
             col_types, 
             col_names, 
             col_files_paths
+        })
+    }
+
+    pub fn new_basic(
+        col_types: Vec<u8>,
+        col_names: Vec<String>
+    ) -> Result<DbMetadata, io_err>
+    {
+        if col_types.len() != col_names.len()
+        {
+            return Err(io_other_err_wrapper("DbMetadata - new_basic - col_types vec has diff len than col_names"));
         }
+
+        let col_count = col_types.len();
+        let col_files_count: Vec<u8> = vec![1; col_count];
+        let mut col_files_paths: HashMap<String, Vec<String>> = HashMap::new();
+
+        // Creating simple file paths
+        for name in &col_names
+        {
+            let file_path = format!("{DB_DATA_DIR}/{name}_1");
+            col_files_paths.insert(name.clone(), vec![file_path]);
+        }
+
+        check_metadata_correctness(
+            col_count, 
+            &col_files_count, 
+            &col_types, 
+            &col_names, 
+            &col_files_paths)?;
+
+        Ok(DbMetadata { 
+            magic_word: MAGIC_WORD, 
+            col_count: col_count as u16, 
+            col_files_count, 
+            col_types, 
+            col_names, 
+            col_files_paths })
     }
 
     pub fn save_to_file(&self, path: &str) -> Result<(), io_err>
@@ -80,7 +128,7 @@ impl  DbMetadata  {
         {
             if !col_name.is_ascii()
             {
-                return Err(io_err_wrapper(&format!("Column: '{}' is not ASCII", col_name)));
+                return Err(io_other_err_wrapper(&format!("Column: '{}' is not ASCII", col_name)));
             }
             f.write(col_name.as_bytes())?;
             f.write(&null_terminator)?;
@@ -100,7 +148,7 @@ impl  DbMetadata  {
 
                 if !file_path.is_ascii()
                 {
-                    return Err(io_err_wrapper(&format!("File_path: '{}' is not ASCII", col_name)));
+                    return Err(io_other_err_wrapper(&format!("File_path: '{}' is not ASCII", col_name)));
                 }
                 f.write(file_path.as_bytes())?;
                 f.write(&null_terminator)?;
@@ -117,7 +165,7 @@ impl  DbMetadata  {
         let mut f = File::open(path)?;
         
         let mut buf = [0 as u8; BUFF_SIZE]; 
-        let mut curr_buf_idx: usize = 0;
+        let mut curr_buf_idx: usize;
         let mut progress_idx: usize = 0; 
         
         let mut magic_word: u32 = 0;
@@ -127,7 +175,9 @@ impl  DbMetadata  {
         let mut col_names: Vec<String> = vec![];
         let mut col_files_paths: HashMap<String, Vec<String>> = HashMap::new();
         let mut curr_stage = ReadStages::InitStage;
+        let mut curr_col_idx: usize = 0;
 
+        // TODO: Add LOGGING
         loop 
         {
             let bytes_read = f.read(&mut buf)?;
@@ -137,11 +187,15 @@ impl  DbMetadata  {
             {
                 if curr_stage != ReadStages::EndedReading
                 {
-                    return Err(io_err_wrapper("There was to little data in file"));
+                    return Err(io_other_err_wrapper("There was to little data in the file"));
                 }
 
                 println!("DbMetadata - read_from_file - SUCCESS, Read 0 bytes, breaking");
                 break;
+            }
+            else if bytes_read > 0 && curr_stage == ReadStages::EndedReading
+            {
+                return Err(io_other_err_wrapper("Stage is EndedReading but there is still data to be read in buffer"));
             }
 
             if curr_stage == ReadStages::InitStage
@@ -150,7 +204,9 @@ impl  DbMetadata  {
                                                             &buf, 
                                                             &mut magic_word, 
                                                             &mut col_count)?;
-                curr_buf_idx = 6;
+                // in init stage we always read 6 bytes, thus we need to set 
+                // curr_buf_idx to 6
+                curr_buf_idx = AFTER_INIT_STAGE_BUFF_IDX;
 
                 // We know how many columns we will have, so we can create as
                 // many empty strings in our vector that will store col names.
@@ -203,21 +259,54 @@ impl  DbMetadata  {
                         &mut col_files_paths, 
                         &col_files_count
                     );
+
+                    // And we can initialize curr_col_idx
+                    curr_col_idx = 0;
                 }
             }
 
             if curr_stage == ReadStages::FilePathStage
             {
+                let col_name = col_names.get(curr_col_idx).unwrap();
+                let col_file_count = *col_files_count
+                                        .get(curr_col_idx)
+                                        .unwrap() as u16;
+                let file_paths_vec = col_files_paths.get_mut(col_name).unwrap();
 
+                curr_stage = read_metadata_str_stage(
+                    bytes_read, 
+                    &buf, 
+                    col_file_count, 
+                    &mut curr_buf_idx, 
+                    &mut progress_idx, 
+                    file_paths_vec,
+                    curr_stage)?;
+                
+                if curr_stage == ReadStages::EndedReading
+                {
+                    // if curr_stage is EndedReading it means that we have read
+                    // all file paths for current column, so we can start 
+                    // reading file paths for next column
+                    curr_col_idx += 1;
+
+                    if curr_col_idx < col_count as usize
+                    {
+                        // Since we want to read more file paths, we change 
+                        // stage to FilePathStage
+                        curr_stage = ReadStages::FilePathStage;
+                    }
+                    // if curr_col_idx == col_count it means that we have read
+                    // all data, so we do leave curr_stage as EndedReading
+                }
             }
         }
 
-        Ok(DbMetadata::new(
+        DbMetadata::new_all_data(
             col_count, 
             col_files_count, 
             col_types, 
             col_names, 
-            col_files_paths))
+            col_files_paths)
     }
 }
 
@@ -239,6 +328,8 @@ fn read_metadata_str_stage(
 
     while *progress_idx < col_count 
     {
+        // res vector is pre-allocated thus we can get_mut string at progress_id
+        // position
         let col_name = res.get_mut(*progress_idx).unwrap();
 
         loop
@@ -250,12 +341,20 @@ fn read_metadata_str_stage(
 
             let c = buf[*curr_buf_idx];
 
+            // When saving metadata file, for every string we append null terminator
             if c == b'\0'
             {
                 eos_present = true;
                 break;
             }
 
+            // When saving metadata file we checked if all characters are ascii.
+            // However someone may have changed our file, or give us incorrect 
+            // one thus we need to check that again when reading.
+            if !c.is_ascii()
+            {
+                return Err(io_other_err_wrapper("DbMetadata - read_metadata - we've read not ASCII character"));
+            }
             col_name.push(c as char);
             *curr_buf_idx += 1;
         }
@@ -283,7 +382,7 @@ fn read_metadata_str_stage(
     }
     else 
     {
-        Err(io_err_wrapper("DbMetadata - read_metadata_str_stage got unsopported stage"))
+        Err(io_other_err_wrapper("DbMetadata - read_metadata_str_stage got unsopported stage"))
     }
 }
 
@@ -309,7 +408,23 @@ fn read_metadata_u8_stage(
             return Ok(stage);
         }
 
-        res.push(buf[*curr_buf_idx]);
+        let val = buf[*curr_buf_idx];
+
+        if stage == ReadStages::FilesCountStage && val == 0
+        {
+            // We can only have positive number of files for given column,
+            // if column exist then there must be at least 1 file for it
+            return Err(io_other_err_wrapper("File count cannot be 0, if column exists there must be at least 1 file for it"));
+        }
+        else if stage == ReadStages::ColTypesStage && val > 1
+        {
+            // 1 means column has String type, 0 i64 type, we do not allow any
+            // other types
+            return Err(io_other_err_wrapper("Column type can be either 1-String or 0-i64"));
+        }
+
+        res.push(val);
+
         *curr_buf_idx += 1;
         *progress_idx += 1;
     }
@@ -330,7 +445,7 @@ fn read_metadata_u8_stage(
     }
     else 
     {
-        Err(io_err_wrapper("read_metadata_u8_stage got unsopported stage"))
+        Err(io_other_err_wrapper("read_metadata_u8_stage got unsopported stage"))
     }
 }
 
@@ -345,7 +460,7 @@ fn read_metadata_init_stage(
     if bytes_read < METADATA_INIT_STAGE_SIZE
     {
         return Err(
-            io_err_wrapper("Metadata file has to little data - Init stage")
+            io_other_err_wrapper("Metadata file has to little data - Init stage")
         );
     }
 
@@ -357,7 +472,7 @@ fn read_metadata_init_stage(
     if *magic_word != MAGIC_WORD
     {
         return Err(
-            io_err_wrapper("Magic word at the begginnig of metadata file is incorrect")
+            io_other_err_wrapper("Magic word at the begginnig of metadata file is incorrect")
         );
     }
 
@@ -403,7 +518,69 @@ fn init_col_names(col_names: &mut Vec<String>, col_count: u16)
     }
 }
 
-fn io_err_wrapper(msg: &str) -> io_err
+fn check_metadata_correctness(
+    col_count: usize,
+    col_files_count: &Vec<u8>,
+    col_types: &Vec<u8>,
+    col_names: &Vec<String>, 
+    col_files_paths: &HashMap<String, Vec<String>>, 
+) -> Result<(), io_err>
+{
+    if col_count == 0 {
+        return Err(io_other_err_wrapper("There must be at least one column (col_count == 0)"));
+    }
+
+    if col_files_count.len() != col_count 
+        || col_types.len() != col_count 
+        || col_names.len() != col_count 
+        || col_files_paths.len() != col_count 
+    {
+        return Err(io_other_err_wrapper("col_names, col_types, col_files_count and col_files_paths hashmap must have the same length equal to col_count"));
+    }
+
+    // As column names we only allow strings wit a-zA-Z characters 
+    // underscores and numbers, max length of String is 255
+    let re = Regex::new(r"^[a-zA-Z][a-zA-Z0-9_]*$").unwrap();
+
+    if col_files_count.iter().any(|x| *x == 0) {
+        return Err(io_other_err_wrapper("Each column must have at least one file (col_files_count contains 0)"));
+    }
+
+    if col_types.iter().any(|x| *x > 1) {
+        return Err(io_other_err_wrapper("Column types must be 0 (int) or 1 (string) only (col_types contains value > 1)"));
+    }
+
+    if col_names.iter().any(|x| x.len() > 255) {
+        return Err(io_other_err_wrapper("Column names must not exceed 255 characters"));
+    }
+
+    let mut names_set = HashSet::new();
+    for name in col_names
+    {
+        names_set.insert(name.clone());
+    }
+
+    if names_set.len() != col_names.len()
+    {
+        return Err(io_other_err_wrapper("There are duplicates in column names"));
+    }
+
+    if col_names.iter().any(|x| !re.is_match(x)) {
+        return Err(io_other_err_wrapper("Column names must match regex: ^[a-zA-Z][a-zA-Z0-9_]*$"));
+    }
+
+    if !col_names.iter().all(|k| col_files_paths.contains_key(k)) {
+        return Err(io_other_err_wrapper("col_files_paths must contain all column names as keys"));
+    }
+
+    if col_files_paths.iter().any(|(_, paths)| paths.len() == 0) {
+        return Err(io_other_err_wrapper("Each column must have at least one file path (col_files_paths contains empty vector)"));
+    }
+
+    Ok(())
+}
+
+fn io_other_err_wrapper(msg: &str) -> io_err
 {
     io_err::new(io_errkind::Other, msg)
 }
