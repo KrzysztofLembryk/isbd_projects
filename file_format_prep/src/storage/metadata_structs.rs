@@ -9,15 +9,21 @@ use regex::Regex;
 use std::io::Error as io_err;
 use std::io::ErrorKind as io_errkind;
 
+//##############################################################################
+//############################# CONSTANTS ######################################
+//##############################################################################
+
 pub const MAGIC_WORD: u32 = 0xF1FAA;
-const DB_DATA_DIR: &str = "./db_data";
 pub const METADATA_FILE_PATH: &str = "./db_metadata";
+const DB_DATA_DIR: &str = "./db_data";
 const METADATA_INIT_STAGE_SIZE: usize = 6;
 const AFTER_INIT_STAGE_BUFF_IDX: usize = 6;
+
 // 2^16 bytes buffer, we don't expect metadata file to be big
 const BUFF_SIZE: usize = 65535;
+// const BUFF_SIZE: usize = 6;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum ReadStages {
     InitStage,          // this is initial stage where we always read 6 bytes
     FilesCountStage,    // this is u8 stage 
@@ -91,6 +97,8 @@ impl  DbMetadata  {
         // Creating simple file paths
         for name in &col_names
         {
+            // At first we have only one file for each column, when we will read
+            // enough data, we will create another one if the first is full
             let file_path = format!("{DB_DATA_DIR}/{name}_1");
             col_files_paths.insert(name.clone(), vec![file_path]);
         }
@@ -184,7 +192,6 @@ impl  DbMetadata  {
         {
             let bytes_read = f.read(&mut buf)?;
             curr_buf_idx = 0;
-            println!("BYTES_READ: {bytes_read}");
             
             match check_if_break_loop(bytes_read, &curr_stage)
             {
@@ -194,7 +201,6 @@ impl  DbMetadata  {
 
             if curr_stage == ReadStages::InitStage
             {
-                println!("INIT STAGE");
                 curr_stage = read_metadata_init_stage(bytes_read, 
                                                             &buf, 
                                                             &mut magic_word, 
@@ -203,7 +209,6 @@ impl  DbMetadata  {
                 // curr_buf_idx to 6
                 curr_buf_idx = AFTER_INIT_STAGE_BUFF_IDX;
 
-                println!("col count: {}", col_count);
                 // We know how many columns we will have, so we can create as
                 // many empty strings in our vector that will store col names.
                 // Doing this will boost our code a little faster.
@@ -263,53 +268,17 @@ impl  DbMetadata  {
 
             if curr_stage == ReadStages::FilePathStage
             {
-
-                loop 
-                {
-                    let col_name = col_names
-                                        .get(curr_col_idx)
-                                        .unwrap();
-                    let col_file_count = *col_files_count
-                                            .get(curr_col_idx)
-                                            .unwrap() as u16;
-                    let file_paths_vec = col_files_paths
-                                            .get_mut(col_name)
-                                            .unwrap();
-
-                    curr_stage = read_metadata_str_stage(
-                        bytes_read, 
-                        &buf, 
-                        col_file_count, 
-                        &mut curr_buf_idx, 
-                        &mut progress_idx, 
-                        file_paths_vec,
-                        curr_stage)?;
-                    
-                    if curr_stage == ReadStages::EndedReading
-                    {
-                        // If curr_stage is EndedReading it means that we have 
-                        // read all file paths for current column, so we can 
-                        // start reading file paths for next column because
-                        // THERE IS STILL SOME DATA IN BUFFER
-                        curr_col_idx += 1;
-    
-                        if curr_col_idx >= col_count as usize
-                        {
-                            // If curr_col_idx == col_count it means that we 
-                            // have read all data, so we want to leave this loop
-                            break;
-                        }
-                    }
-                    else // curr_stage == FilePathStage
-                    {
-                        // We haven't ended reading all data for this column yet
-                        // but THERE IS NO MORE DATA IN BUFFER
-                        // thus we need to break from this loop to get more
-                        // data from read, but we leave curr_stage as 
-                        // FilePathStage cause we want to come back here
-                        break;
-                    }
-                }
+                curr_stage = read_file_paths(
+                    &mut curr_buf_idx, 
+                    &mut progress_idx, 
+                    &mut curr_col_idx, 
+                    curr_stage, 
+                    bytes_read, 
+                    col_count as usize, 
+                    &buf, 
+                    &col_names, 
+                    &col_files_count, 
+                    &mut col_files_paths)?;
             }
         }
 
@@ -358,20 +327,28 @@ fn read_file_paths(
     let mut stage = curr_stage;
     loop 
     {
+        // curr_col_idx - all column data (i.e. col names, file paths) are 
+        // stored in order, so at 0 idx we have col_name_0 and file paths for 
+        // this column are stored first in our metadata file thus we want to 
+        // read them to file_paths_hashmap at col_name_0 key
         let col_name = col_names
                             .get(*curr_col_idx)
                             .unwrap();
-        let col_file_count = *col_files_count
+        // Each column has at least 1 file, but nbr of files for each column
+        // may differ
+        let file_count = *col_files_count
                                 .get(*curr_col_idx)
                                 .unwrap() as u16;
+        // For current column we will store here all of it's file paths strings
         let file_paths_vec = col_files_paths
                                 .get_mut(col_name)
                                 .unwrap();
 
+        // We will read file_count strings into file_paths_vec here 
         stage = read_metadata_str_stage(
             bytes_read, 
             buf, 
-            col_file_count, 
+            file_count, 
             curr_buf_idx, 
             progress_idx, 
             file_paths_vec,
@@ -391,6 +368,10 @@ fn read_file_paths(
                 // have read all data, so we want to leave this loop
                 break;
             }
+            // We need to set stage to FilePathStage since 
+            // read_metadata_str_stage expects this stage to function correctly,
+            // otherwise it will throw error since it does not expect sucb stage
+            stage = ReadStages::FilePathStage;
         }
         else // curr_stage == FilePathStage
         {
@@ -422,10 +403,8 @@ fn read_metadata_str_stage(
     let mut eos_present = false;
     let col_count = col_count as usize;
 
-    println!("col_count: {}", col_count);
     while *progress_idx < col_count 
     {
-        println!("progress idx: {}", *progress_idx);
         // res vector is pre-allocated thus we can get_mut string at progress_id
         // position
         let col_name = res.get_mut(*progress_idx).unwrap();
@@ -438,11 +417,10 @@ fn read_metadata_str_stage(
             }
 
             let c = buf[*curr_buf_idx];
-            println!("c = {}", c as char);
-            // When saving metadata file, for every string we append null terminator
+            // When saving metadata file, for every string we append null 
+            // terminator
             if c == b'\0'
             {
-                println!("null terminator found");
                 eos_present = true;
                 *curr_buf_idx += 1;
                 break;
@@ -692,7 +670,6 @@ fn check_if_break_loop(
             return Err(io_other_err_wrapper("There was to little data in the file"));
         }
 
-        println!("DbMetadata - read_from_file - SUCCESS, Read 0 bytes, breaking");
         return Ok(true);
     }
     else if bytes_read > 0 && *curr_stage == ReadStages::EndedReading
