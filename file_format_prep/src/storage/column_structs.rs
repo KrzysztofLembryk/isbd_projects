@@ -3,11 +3,12 @@ use std::io::{Seek, SeekFrom};
 use std::io::{Read, Write};
 use regex::Regex;
 use std::mem;
+use std::fmt;
 
 use std::io::Error as io_err;
 use crate::errors::io_other_err_wrapper;
-use crate::constants::{MAGIC_WORD, MAX_FILE_SIZE};
-use crate::storage::string_read::{StrLenCheckType, read_string_from_buf};
+use crate::constants::{MAGIC_WORD, MAX_FILE_SIZE, DB_DATA_DIR};
+use crate::storage::string_handlers::{StrLenCheckType, read_string_from_buf};
 
 const COL_HEADER_MIN_SIZE: usize = 14;
 const COL_HEADER_DATA_SIZE_OFFSET: u64 = 8;
@@ -51,10 +52,24 @@ impl ColHeader
             col_name })
     }
 
-    pub fn save_to_file(&self, f: &mut File) -> Result<(), io_err>
+    pub fn new_empty(
+        col_type: u8, 
+        col_name: String
+    ) -> Result<ColHeader, io_err>
     {
+        ColHeader::new(0, col_type, false, 0, col_name)
+    }
+
+    pub fn save_to_file(&self) -> Result<(String, File), io_err>
+    {
+        // Function returns file_name of created file and its File Handler
+        // 
         // In save_to_file function we always create a new file even if it 
-        // already existed, append_to_file will append instead of creating
+        // already existed, this function should be invoked only once when 
+        // creating column file for the first time
+        let file_name = format!("{}/{}_{}", DB_DATA_DIR, self.col_name, self.col_id);
+        let mut f = File::create(&file_name)?;
+
         let null_terminator = [b'\0'];
         let header_size = mem::size_of_val(&self.magic_word)
             + mem::size_of_val(&self.col_id)
@@ -85,10 +100,10 @@ impl ColHeader
 
         f.flush()?;
 
-        Ok(())
+        Ok((file_name, f))
     }
     
-    fn read_from_buf(
+    pub fn read_from_buf(
         curr_buf_idx: &mut usize,
         bytes_read: usize,
         buf: &[u8],
@@ -152,7 +167,7 @@ impl ColHeader
         })
     }
 
-    fn increase_data_size(
+    pub fn increase_data_size(
         &mut self, 
         new_data_len: u32
     ) -> Result<(), &str>
@@ -180,16 +195,16 @@ impl ColHeader
         // currently we do it only in-memory, when we won't have enough space
         // in file, we will both append new data to file AND modify header
         self.size_of_data = new_data_size;
+        println!("New data size: {}", self.size_of_data);
 
         Ok(())
     }
 
-    fn modify_data_size_in_file(
+    pub fn modify_data_size_in_file(
         &self, 
         f: &mut File, 
     ) -> Result<(), io_err>
     {
-        
         if self.is_overflow
         {
             f.seek(SeekFrom::Start(COL_HEADER_OVERFLOW_OFFSET))?;
@@ -202,9 +217,21 @@ impl ColHeader
 
         Ok(())
     }
-
 }
 
+
+impl fmt::Display for ColHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "ColHeader:")?;
+        writeln!(f, "  magic_word: 0x{:X}", self.magic_word)?;
+        writeln!(f, "  col_id: {}", self.col_id)?;
+        writeln!(f, "  col_type: {}", self.col_type)?;
+        writeln!(f, "  is_overflow: {}", self.is_overflow)?;
+        writeln!(f, "  size_of_data: {}", self.size_of_data)?;
+        writeln!(f, "  col_name: {}", self.col_name)?;
+        Ok(())
+    }
+}
 
 pub struct ColData
 {

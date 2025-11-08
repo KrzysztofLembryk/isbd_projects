@@ -1,4 +1,5 @@
-use std::io::Error as io_err;
+use std::fs::File;
+use std::io::{Error as io_err, Write};
 use crate::constants::{MAX_COL_NAME_LEN, MAX_DATA_STR_LEN};
 use crate::errors::io_other_err_wrapper;
 
@@ -8,6 +9,24 @@ pub enum StrLenCheckType
     ColNameLenCheck,
     DataLenCheck,
     NoCheck,
+}
+
+pub fn save_string_to_file_with_null_char(
+    s: &String, 
+    f: &mut File
+) -> Result<(), io_err>
+{
+    let null_terminator = [b'\0'];
+
+    if !s.is_ascii()
+    {
+        return Err(io_other_err_wrapper(&format!("Column: '{}' is not ASCII", s)));
+    }
+
+    f.write(s.as_bytes())?;
+    f.write(&null_terminator)?;
+
+    Ok(())
 }
 
 pub fn read_string_from_buf(

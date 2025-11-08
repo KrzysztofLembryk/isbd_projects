@@ -9,7 +9,8 @@ use regex::Regex;
 use std::io::Error as io_err;
 use crate::errors::io_other_err_wrapper;
 use crate::constants::{MAGIC_WORD, DB_DATA_DIR};
-use crate::storage::string_read::{StrLenCheckType, read_string_from_buf};
+use crate::storage::string_handlers::{StrLenCheckType, 
+    read_string_from_buf, save_string_to_file_with_null_char};
 
 //##############################################################################
 //############################# CONSTANTS ######################################
@@ -138,12 +139,13 @@ impl  DbMetadata  {
         // to the end of string, since rust uses pointer+length encoding
         for col_name in &self.col_names
         {
-            if !col_name.is_ascii()
-            {
-                return Err(io_other_err_wrapper(&format!("Column: '{}' is not ASCII", col_name)));
-            }
-            f.write(col_name.as_bytes())?;
-            f.write(&null_terminator)?;
+            // if !col_name.is_ascii()
+            // {
+            //     return Err(io_other_err_wrapper(&format!("Column: '{}' is not ASCII", col_name)));
+            // }
+            // f.write(col_name.as_bytes())?;
+            // f.write(&null_terminator)?;
+            save_string_to_file_with_null_char(col_name, &mut f)?;
         }
 
         // We want to maintain the same order for files paths as we have for 
@@ -157,13 +159,13 @@ impl  DbMetadata  {
 
             for file_path in col_paths
             {
-
-                if !file_path.is_ascii()
-                {
-                    return Err(io_other_err_wrapper(&format!("File_path: '{}' is not ASCII", col_name)));
-                }
-                f.write(file_path.as_bytes())?;
-                f.write(&null_terminator)?;
+                // if !file_path.is_ascii()
+                // {
+                //     return Err(io_other_err_wrapper(&format!("File_path: '{}' is not ASCII", col_name)));
+                // }
+                // f.write(file_path.as_bytes())?;
+                // f.write(&null_terminator)?;
+                save_string_to_file_with_null_char(&file_path, &mut f)?;
             }
         }
 

@@ -1,10 +1,11 @@
+use crate::storage::column_structs::ColHeader;
 use crate::storage::metadata_structs::DbMetadata;
 use crate::constants::{METADATA_FILE_PATH, DB_DATA_DIR};
 use std::io::Error as io_err;
 use std::io::ErrorKind as err_kind;
 
 
-struct DbManager
+pub struct DbManager
 {
     db_meta: Option<DbMetadata>
 }
@@ -40,5 +41,15 @@ impl DbManager
         Ok(())
     }
 
+    pub fn save_col_data_to_file(
+        &mut self,
+        col_header: &mut ColHeader,
+        curr_buf_idx: &mut usize,
+        bytes_read: usize,
+        buf: &[u8] // buf max len is CHUNK SIZE
+    )
+    {
+
+    }
     // pub fn save_data_to_column(col_name: &String, )
 }
