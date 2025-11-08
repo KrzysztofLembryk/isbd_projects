@@ -7,15 +7,12 @@ use std::fmt;
 use regex::Regex;
 
 use std::io::Error as io_err;
-use std::io::ErrorKind as io_errkind;
-
+use crate::errors::io_other_err_wrapper;
+use crate::constants::{MAGIC_WORD, DB_DATA_DIR};
 //##############################################################################
 //############################# CONSTANTS ######################################
 //##############################################################################
 
-pub const MAGIC_WORD: u32 = 0xF1FAA;
-pub const METADATA_FILE_PATH: &str = "./db_metadata";
-const DB_DATA_DIR: &str = "./db_data";
 const METADATA_INIT_STAGE_SIZE: usize = 6;
 const AFTER_INIT_STAGE_BUFF_IDX: usize = 6;
 
@@ -691,7 +688,3 @@ fn check_if_break_loop(
     Ok(false)
 }
 
-fn io_other_err_wrapper(msg: &str) -> io_err
-{
-    io_err::new(io_errkind::Other, msg)
-}
