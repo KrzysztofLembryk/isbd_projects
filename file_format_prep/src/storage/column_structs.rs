@@ -60,6 +60,19 @@ impl ColHeader
         ColHeader::new(0, col_type, false, 0, col_name)
     }
 
+    /// Function creates next header in sequence. <br>
+    /// So it increases col_id, sets overflow to false, size_of_data to 0
+    /// and returns new ColHeader object
+    pub fn create_next(&self) -> Result<ColHeader, io_err>
+    {
+        ColHeader::new(
+            self.col_id + 1, 
+            self.col_type, 
+            false, 
+            0, 
+            self.col_name.clone())
+    }
+
     pub fn save_to_file(&self) -> Result<(String, File), io_err>
     {
         // Function returns file_name of created file and its File Handler
@@ -216,6 +229,27 @@ impl ColHeader
         f.write(&self.size_of_data.to_be_bytes())?;
 
         Ok(())
+    }
+
+    // GETTERS
+    pub fn col_id(&self) -> u16 {
+        self.col_id
+    }
+
+    pub fn col_type(&self) -> u8 {
+        self.col_type
+    }
+
+    pub fn is_overflow(&self) -> bool {
+        self.is_overflow
+    }
+
+    pub fn size_of_data(&self) -> u32 {
+        self.size_of_data
+    }
+
+    pub fn col_name(&self) -> &String {
+        &self.col_name
     }
 }
 

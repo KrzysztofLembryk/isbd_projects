@@ -39,12 +39,9 @@ pub struct DbMetadata
     /// -- magic_word: word at the beginning of file saying that this is file
     ///                of our database
     /// -- col_count: we will store how many columns we have, so that when 
-    ///             reading next bytes we know how many 
     /// -- col_names: every string will end with '\0',
-    ///               TODO:
-    ///               regex for col name: ^[a-zA-Z][a-zA-z0-9_]*$, max len: 255
     /// -- col_types: 1 if string, 0 if int
-    /// -- col_files_count: these numbers say how many files one column takes
+    /// -- col_files_count: these numbers say how many files one column has
     /// -- col_files_paths: paths to given files
     magic_word: u32,
     col_count: u16,
@@ -52,6 +49,7 @@ pub struct DbMetadata
     col_types: Vec<u8>,
     col_names: Vec<String>, 
     col_files_paths: HashMap<String, Vec<String>>, // k: col_name, v: file_path
+    col_names_idxs: HashMap<String, usize>
 }
 
 impl  DbMetadata  {
@@ -70,13 +68,22 @@ impl  DbMetadata  {
             &col_names, 
             &col_files_paths)?;
 
+        // We will need this for quick lookup of col names idx when we have 
+        // only column name
+        let mut idxs = HashMap::new();
+        for (id, name) in col_names.iter().enumerate()
+        {
+            idxs.insert(name.clone(), id);
+        }
+
         Ok(DbMetadata { 
             magic_word: MAGIC_WORD, 
             col_count, 
             col_files_count, 
             col_types, 
             col_names, 
-            col_files_paths
+            col_files_paths,
+            col_names_idxs: idxs            
         })
     }
 
@@ -331,6 +338,30 @@ impl  DbMetadata  {
         &self.col_files_paths
     }
 
+    pub fn append_new_file_path(
+        &mut self, 
+        col_name: &String, 
+        file_path: String
+    ) -> Result<(), io_err>
+    {
+        if self.col_files_paths.contains_key(col_name)
+        {
+            // if we have such col name in map we just pushback a new file path
+            self.col_files_paths.get_mut(col_name).unwrap().push(file_path);
+
+            // and also update variable storing number of cols for given column
+            let idx = self.col_names_idxs.get(col_name).unwrap();
+
+            let file_count = self.col_files_count.get_mut(*idx).unwrap();
+            *file_count += 1;
+        }
+        else 
+        {
+            return Err(io_other_err_wrapper(&format!("col_name: {} is not present in db_metadata", col_name)));
+        }
+
+        Ok(())
+    }
 }
 
 impl fmt::Display for DbMetadata {

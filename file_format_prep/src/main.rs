@@ -1,4 +1,4 @@
-use std::collections;
+use std::collections::{self, HashMap};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::fs::OpenOptions;
@@ -37,10 +37,14 @@ fn main() {
     // println!("METADATA READ SUCCESS:");
     // println!("{}", metadata);
 
-    let mut db_manager = DbManager::new();
+    // let mut db_manager = DbManager::new();
 
-    db_manager.start_db().unwrap();
-
+    // db_manager.start_db().unwrap();
+    let mut m = HashMap::new();
+    m.insert("key", 1);
+    let x = m.get_mut("key").unwrap();
+    *x += 1;
+    println!("map: {:?}", m);
 
 }
 
