@@ -103,6 +103,8 @@ impl  DbMetadata  {
             col_files_paths.insert(name.clone(), vec![file_path]);
         }
 
+        // TODO: probably we should use here DbMetadata::new_all_data
+        // instead of repeating code
         check_metadata_correctness(
             col_count, 
             &col_files_count, 
@@ -409,6 +411,7 @@ fn read_metadata_str_stage(
         // position
         let col_name = res.get_mut(*progress_idx).unwrap();
 
+
         loop
         {
             if *curr_buf_idx >= bytes_read
@@ -431,9 +434,16 @@ fn read_metadata_str_stage(
             // one thus we need to check that again when reading.
             if !c.is_ascii()
             {
-                return Err(io_other_err_wrapper("DbMetadata - read_metadata - we've read not ASCII character"));
+                return Err(io_other_err_wrapper("DbMetadata - read_metadata - we've read not an ASCII character"));
             }
+
             col_name.push(c as char);
+
+            if col_name.len() > 255
+            {
+                return Err(io_other_err_wrapper(&format!("read_metadata_str_stage - column name exceeds 255 characters, name: {}", col_name)));
+            }
+
             *curr_buf_idx += 1;
         }
 
@@ -616,9 +626,6 @@ fn check_metadata_correctness(
         return Err(io_other_err_wrapper("col_names, col_types, col_files_count and col_files_paths hashmap must have the same length equal to col_count"));
     }
 
-    // As column names we only allow strings wit a-zA-Z characters 
-    // underscores and numbers, max length of String is 255
-    let re = Regex::new(r"^[a-zA-Z][a-zA-Z0-9_]*$").unwrap();
 
     if col_files_count.iter().any(|x| *x == 0) {
         return Err(io_other_err_wrapper("Each column must have at least one file (col_files_count contains 0)"));
@@ -642,6 +649,10 @@ fn check_metadata_correctness(
     {
         return Err(io_other_err_wrapper("There are duplicates in column names"));
     }
+
+    // As column names we only allow strings wit a-zA-Z characters 
+    // underscores and numbers, max length of String is 255
+    let re = Regex::new(r"^[a-zA-Z][a-zA-Z0-9_]*$").unwrap();
 
     if col_names.iter().any(|x| !re.is_match(x)) {
         return Err(io_other_err_wrapper("Column names must match regex: ^[a-zA-Z][a-zA-Z0-9_]*$"));
