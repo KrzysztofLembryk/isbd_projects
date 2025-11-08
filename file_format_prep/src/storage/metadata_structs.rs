@@ -10,15 +10,16 @@ use std::io::Error as io_err;
 use crate::errors::io_other_err_wrapper;
 use crate::constants::{MAGIC_WORD, DB_DATA_DIR};
 use crate::storage::string_read::{StrLenCheckType, read_string_from_buf};
+
 //##############################################################################
 //############################# CONSTANTS ######################################
 //##############################################################################
 
 const METADATA_INIT_STAGE_SIZE: usize = 6;
 const AFTER_INIT_STAGE_BUFF_IDX: usize = 6;
-
 // 2^16 bytes buffer, we don't expect metadata file to be big
 const BUFF_SIZE: usize = 65535;
+
 // const BUFF_SIZE: usize = 6;
 
 #[derive(PartialEq, Debug)]
@@ -400,7 +401,8 @@ fn read_metadata_str_stage(
     // eos = end of string
     // this variable checks if we encountered null termination of 
     // string for current column, if not, we need to read more data
-    let mut eos_present = false;
+    // let mut eos_present = false;
+    let mut eos_present;
     let col_count = col_count as usize;
 
     while *progress_idx < col_count 
@@ -409,41 +411,12 @@ fn read_metadata_str_stage(
         // position
         let col_name = res.get_mut(*progress_idx).unwrap();
 
-
-        loop
-        {
-            if *curr_buf_idx >= bytes_read
-            {
-                break;
-            }
-
-            let c = buf[*curr_buf_idx];
-            // When saving metadata file, for every string we append null 
-            // terminator
-            if c == b'\0'
-            {
-                eos_present = true;
-                *curr_buf_idx += 1;
-                break;
-            }
-
-            // When saving metadata file we checked if all characters are ascii.
-            // However someone may have changed our file, or give us incorrect 
-            // one thus we need to check that again when reading.
-            if !c.is_ascii()
-            {
-                return Err(io_other_err_wrapper("DbMetadata - read_metadata - we've read not an ASCII character"));
-            }
-
-            col_name.push(c as char);
-
-            if col_name.len() > 255
-            {
-                return Err(io_other_err_wrapper(&format!("read_metadata_str_stage - column name exceeds 255 characters, name: {}", col_name)));
-            }
-
-            *curr_buf_idx += 1;
-        }
+        eos_present = read_string_from_buf(
+            curr_buf_idx, 
+            bytes_read, 
+            buf, 
+            col_name, 
+            StrLenCheckType::ColNameLenCheck)?;
 
         if !eos_present
         {
@@ -452,7 +425,8 @@ fn read_metadata_str_stage(
             return Ok(stage);
         }
 
-        eos_present = false;
+        // eos_present == true thus we read whole string and can advance to the 
+        // next one
         *progress_idx += 1;
     }
 
