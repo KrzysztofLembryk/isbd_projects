@@ -1,10 +1,17 @@
+use std::fs::File;
 
 pub fn read_csv(file_path: &str, delim: u8) 
     -> (Vec<u8>, Vec<String> , Vec<Vec<String>>)
 {
-    /// CSV file as first row needs to have types: 's' or 'i'
-    /// as second row column names
-    use std::fs::File;
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // !!!!!!!!!!!! CURRENTLY THIS IS REALLY SIMPLE CSV READER !!!!!!!!!!!!!!!!
+    // !!!!! so that we have a way to easily populate our files with data !!!!!
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // 
+    // CSV file format
+    // -- first row: types of column, either 's' or 'i'
+    // -- second row: column names, max 255 characters, 
+    //                satisfying regex: ^[a-zA-Z][a-zA-Z0-9_]*$
 
     let file = match File::open(file_path) {
         Ok(f) => f,

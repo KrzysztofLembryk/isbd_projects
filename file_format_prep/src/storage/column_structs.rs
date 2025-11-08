@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::io::{Seek, SeekFrom};
 use std::io::{Read, Write};
 use regex::Regex;
 use std::mem;
@@ -9,6 +10,8 @@ use crate::constants::{MAGIC_WORD, MAX_FILE_SIZE};
 use crate::storage::string_read::{StrLenCheckType, read_string_from_buf};
 
 const COL_HEADER_MIN_SIZE: usize = 14;
+const COL_HEADER_DATA_SIZE_OFFSET: u64 = 8;
+const COL_HEADER_OVERFLOW_OFFSET: u64 = 7;
 
 pub struct ColHeader
 {
@@ -149,17 +152,66 @@ impl ColHeader
         })
     }
 
-    fn increase_data_size_in_file(&mut self, f: &mut File)
+    fn increase_data_size(
+        &mut self, 
+        new_data_len: u32
+    ) -> Result<(), &str>
     {
         // When we read next data chunk we want to append this data to 
         // file, so we firstly need to update metadata about data size in this 
-        // file so that we can check if we can append new data or if we need to 
-        // create next file
+        // file so that we can check if we have enough space to append new data 
+        // or if we need to create next file
         // --> if we need to create next file, we need to change is_overflow
         // flag in current file and also in METADATA we need to add new 
         // file_path for this column
+
+        // For now we want to store WHOLE chunks in our files, so if one whole
+        // chunk does not fit, we need to create a new file
+        let new_data_size = match self.size_of_data.checked_add(new_data_len)
+        {
+            None => {
+                self.is_overflow = true;
+                return Err("new data chunk won't fit in curr file");
+            },
+            Some(new_size) => new_size
+        };
+
+        // If we have enough space we increase size we store in header, but 
+        // currently we do it only in-memory, when we won't have enough space
+        // in file, we will both append new data to file AND modify header
+        self.size_of_data = new_data_size;
+
+        Ok(())
     }
+
+    fn modify_data_size_in_file(
+        &self, 
+        f: &mut File, 
+    ) -> Result<(), io_err>
+    {
+        
+        if self.is_overflow
+        {
+            f.seek(SeekFrom::Start(COL_HEADER_OVERFLOW_OFFSET))?;
+            let x: u8 = self.is_overflow as u8;
+            f.write(&x.to_be_bytes())?;
+        }
+        
+        f.seek(SeekFrom::Start(COL_HEADER_DATA_SIZE_OFFSET))?;
+        f.write(&self.size_of_data.to_be_bytes())?;
+
+        Ok(())
+    }
+
 }
+
+
+pub struct ColData
+{
+    h: ColHeader,
+    data: Vec<u8>
+}
+
 
 
 fn check_col_name_correctness(col_name: &String) -> Result<(), io_err>
@@ -180,10 +232,4 @@ fn check_col_name_correctness(col_name: &String) -> Result<(), io_err>
         return Err(io_other_err_wrapper("Column names must match regex: ^[a-zA-Z][a-zA-Z0-9_]*$"));
     }
     Ok(())
-}
-
-pub struct ColData
-{
-    h: ColHeader,
-    data: Vec<u8>
 }

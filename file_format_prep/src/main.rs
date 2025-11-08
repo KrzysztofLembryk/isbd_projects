@@ -1,5 +1,6 @@
 use file_format_prep::csv_reader;
 use file_format_prep::storage::metadata_structs as meta_structs;
+use file_format_prep::constants::METADATA_FILE_PATH;
 
 fn main() {
     // let (types, names, _columns) = s_builder::read_csv("./db_data/sample.tsv", b'\t');
@@ -19,7 +20,7 @@ fn main() {
     //     Err(e) => panic!("{e}")
     // }
 
-    let metadata = meta_structs::DbMetadata::read_from_file(meta_structs::METADATA_FILE_PATH).unwrap();
+    let metadata = meta_structs::DbMetadata::read_from_file(METADATA_FILE_PATH).unwrap();
 
     println!("METADATA READ SUCCESS:");
     println!("{}", metadata);
