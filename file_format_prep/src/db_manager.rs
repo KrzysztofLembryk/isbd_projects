@@ -50,7 +50,7 @@ impl DbManager
     /// - we expect to write chunk_size bytes all the time except last time
     pub fn save_data_chunk_to_file(
         &mut self,
-        f: File, // db manager will first check if col exists and then
+        mut f: File, // db manager will first check if col exists and then
                       // will open file will run this func to save data 
         col_header: &mut ColHeader,
         bytes_read: usize,
@@ -70,12 +70,12 @@ impl DbManager
 
                 // not enough free space in file, thus we need to create a new
                 // file, but before that we write updated col_header to file
-                col_header.modify_data_size_in_file(f)?;
+                col_header.modify_data_size_in_file(&mut f)?;
 
                 // We no longer need old col_header since now we will write 
                 // to a new file
                 *col_header = col_header.create_next()?;
-                let (file_path, mut new_f) = col_header.save_to_file()?;
+                let (file_path, new_f) = col_header.save_to_file()?;
 
                 // Now we need to update our metadata
                 self.db_meta
