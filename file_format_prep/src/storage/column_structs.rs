@@ -51,7 +51,7 @@ impl ColHeader
             col_name })
     }
 
-    fn save_to_file(&self, f: &mut File) -> Result<(), io_err>
+    pub fn save_to_file(&self, f: &mut File) -> Result<(), io_err>
     {
         // In save_to_file function we always create a new file even if it 
         // already existed, append_to_file will append instead of creating

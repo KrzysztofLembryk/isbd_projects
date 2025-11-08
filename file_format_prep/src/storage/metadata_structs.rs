@@ -88,6 +88,10 @@ impl  DbMetadata  {
         {
             return Err(io_other_err_wrapper("DbMetadata - new_basic - col_types vec has diff len than col_names"));
         }
+        if col_types.len() > u16::MAX as usize
+        {
+            return Err(io_other_err_wrapper("DbMetadata - new_basic - number of columns is greater than u16::MAX"));
+        }
 
         let col_count = col_types.len();
         let col_files_count: Vec<u8> = vec![1; col_count];
@@ -98,26 +102,23 @@ impl  DbMetadata  {
         {
             // At first we have only one file for each column, when we will read
             // enough data, we will create another one if the first is full
-            let file_path = format!("{DB_DATA_DIR}/{name}_1");
+            let file_path = format!("{DB_DATA_DIR}/{name}_0");
             col_files_paths.insert(name.clone(), vec![file_path]);
         }
 
         // TODO: probably we should use here DbMetadata::new_all_data
         // instead of repeating code
-        check_metadata_correctness(
-            col_count, 
-            &col_files_count, 
-            &col_types, 
-            &col_names, 
-            &col_files_paths)?;
-
-        Ok(DbMetadata { 
-            magic_word: MAGIC_WORD, 
-            col_count: col_count as u16, 
+        DbMetadata::new_all_data(
+            col_count as u16, 
             col_files_count, 
             col_types, 
             col_names, 
-            col_files_paths })
+            col_files_paths)
+    }
+
+    pub fn new_empty() -> Result<DbMetadata, io_err>
+    {
+        DbMetadata::new_basic(Vec::new(), Vec::new())
     }
 
     pub fn save_to_file(&self, path: &str) -> Result<(), io_err>
@@ -210,6 +211,16 @@ impl  DbMetadata  {
                 // curr_buf_idx to 6
                 curr_buf_idx = AFTER_INIT_STAGE_BUFF_IDX;
 
+                if col_count == 0 && bytes_read == METADATA_INIT_STAGE_SIZE
+                {
+                    // this is empty data base case
+                    return DbMetadata::new_all_data(
+                                                    col_count, 
+                                                    col_files_count, 
+                                                    col_types, 
+                                                    col_names, 
+                                                    col_files_paths);
+                }
                 // We know how many columns we will have, so we can create as
                 // many empty strings in our vector that will store col names.
                 // Doing this will boost our code a little faster.
@@ -290,6 +301,34 @@ impl  DbMetadata  {
             col_names, 
             col_files_paths)
     }
+
+    // ###################################################################### 
+    // ############################ GETTERS #################################
+    // ###################################################################### 
+    pub fn col_count(&self) -> u16
+    {
+        self.col_count
+    }
+    pub fn col_files_count(&self) -> &Vec<u8> 
+    {
+        &self.col_files_count
+    }
+
+    pub fn col_types(&self) -> &Vec<u8> 
+    {
+        &self.col_types
+    }
+
+    pub fn col_names(&self) -> &Vec<String> 
+    {
+        &self.col_names
+    }
+
+    pub fn col_files_paths(&self) -> &HashMap<String, Vec<String>> 
+    {
+        &self.col_files_paths
+    }
+
 }
 
 impl fmt::Display for DbMetadata {
@@ -384,7 +423,6 @@ fn read_file_paths(
             break;
         }
     }
-
     Ok(stage)
 }
 
@@ -586,9 +624,9 @@ fn check_metadata_correctness(
     col_files_paths: &HashMap<String, Vec<String>>, 
 ) -> Result<(), io_err>
 {
-    if col_count == 0 {
-        return Err(io_other_err_wrapper("There must be at least one column (col_count == 0)"));
-    }
+    // if col_count == 0 {
+    //     return Err(io_other_err_wrapper("There must be at least one column (col_count == 0)"));
+    // }
 
     if col_files_count.len() != col_count 
         || col_types.len() != col_count 
@@ -598,6 +636,12 @@ fn check_metadata_correctness(
         return Err(io_other_err_wrapper("col_names, col_types, col_files_count and col_files_paths hashmap must have the same length equal to col_count"));
     }
 
+    if col_count == 0
+    {
+        // if db empty, we checked that other variables are also of 0 length 
+        // thus there is no sense in checking following cases
+        return Ok(())
+    }
 
     if col_files_count.iter().any(|x| *x == 0) {
         return Err(io_other_err_wrapper("Each column must have at least one file (col_files_count contains 0)"));
@@ -636,6 +680,14 @@ fn check_metadata_correctness(
 
     if col_files_paths.iter().any(|(_, paths)| paths.len() == 0) {
         return Err(io_other_err_wrapper("Each column must have at least one file path (col_files_paths contains empty vector)"));
+    }
+
+    let re = Regex::new(r"^[a-zA-Z./][a-zA-Z0-9_./]*$").unwrap();
+    if col_files_paths.iter().any(|(_, paths)| paths
+                                                .iter()
+                                                .any(|x| !re.is_match(x)))
+    {
+        return Err(io_other_err_wrapper("Each file path must satisfy regex: ^[a-zA-Z./][a-zA-Z0-9_./]*$"));
     }
 
     Ok(())
