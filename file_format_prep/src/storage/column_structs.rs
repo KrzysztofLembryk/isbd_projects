@@ -1,13 +1,13 @@
 use std::fs::File;
 use std::io::{Seek, SeekFrom};
-use std::io::{Read, Write};
+use std::io::{Write};
 use regex::Regex;
 use std::mem;
 use std::fmt;
 
 use std::io::Error as io_err;
 use crate::errors::io_other_err_wrapper;
-use crate::constants::{MAGIC_WORD, MAX_FILE_SIZE, AllowedColTypes};
+use crate::constants::{MAGIC_WORD, AllowedColTypes};
 use crate::storage::string_handlers::{StrLenCheckType, read_string_from_buf};
 
 #[cfg(test)]
@@ -56,7 +56,11 @@ impl ColHeader
         col_name: String
     ) -> Result<ColHeader, io_err>
     {
-        ColHeader::new(0, col_type, false, 0, col_name)
+        let col_id = 0;
+        let is_overflow = false;
+        let size_of_data = 0;
+
+        ColHeader::new(col_id, col_type, is_overflow, size_of_data, col_name)
     }
 
     /// Function creates next header in sequence. <br>
@@ -286,11 +290,11 @@ impl fmt::Display for ColHeader {
     }
 }
 
-pub struct ColData
-{
-    h: ColHeader,
-    data: Vec<u8>
-}
+// pub struct ColData
+// {
+//     h: ColHeader,
+//     data: Vec<u8>
+// }
 
 
 

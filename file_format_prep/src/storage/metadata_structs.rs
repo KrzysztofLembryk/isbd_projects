@@ -87,7 +87,7 @@ impl  DbMetadata  {
         })
     }
 
-    pub fn new_basic(
+    pub fn new(
         col_types: Vec<u8>,
         col_names: Vec<String>
     ) -> Result<DbMetadata, io_err>
@@ -126,13 +126,13 @@ impl  DbMetadata  {
 
     pub fn new_empty() -> Result<DbMetadata, io_err>
     {
-        DbMetadata::new_basic(Vec::new(), Vec::new())
+        DbMetadata::new(Vec::new(), Vec::new())
     }
 
     pub fn save_to_file(&self, path: &str) -> Result<(), io_err>
     {
         let mut f = File::create(path)?;
-        let null_terminator = [b'\0'];
+        // let null_terminator = [b'\0'];
 
         f.write(&self.magic_word.to_be_bytes())?;
 
@@ -311,6 +311,31 @@ impl  DbMetadata  {
             col_files_paths)
     }
 
+    pub fn append_new_file_path(
+        &mut self, 
+        col_name: &String, 
+        file_path: String
+    ) -> Result<(), io_err>
+    {
+        if self.col_files_paths.contains_key(col_name)
+        {
+            // if we have such col name in map we just pushback a new file path
+            self.col_files_paths.get_mut(col_name).unwrap().push(file_path);
+
+            // and also update variable storing number of cols for given column
+            let idx = self.col_names_idxs.get(col_name).unwrap();
+
+            let file_count = self.col_files_count.get_mut(*idx).unwrap();
+            *file_count += 1;
+        }
+        else 
+        {
+            return Err(io_other_err_wrapper(&format!("col_name: {} is not present in db_metadata", col_name)));
+        }
+
+        Ok(())
+    }
+
     // ###################################################################### 
     // ############################ GETTERS #################################
     // ###################################################################### 
@@ -336,31 +361,6 @@ impl  DbMetadata  {
     pub fn col_files_paths(&self) -> &HashMap<String, Vec<String>> 
     {
         &self.col_files_paths
-    }
-
-    pub fn append_new_file_path(
-        &mut self, 
-        col_name: &String, 
-        file_path: String
-    ) -> Result<(), io_err>
-    {
-        if self.col_files_paths.contains_key(col_name)
-        {
-            // if we have such col name in map we just pushback a new file path
-            self.col_files_paths.get_mut(col_name).unwrap().push(file_path);
-
-            // and also update variable storing number of cols for given column
-            let idx = self.col_names_idxs.get(col_name).unwrap();
-
-            let file_count = self.col_files_count.get_mut(*idx).unwrap();
-            *file_count += 1;
-        }
-        else 
-        {
-            return Err(io_other_err_wrapper(&format!("col_name: {} is not present in db_metadata", col_name)));
-        }
-
-        Ok(())
     }
 }
 

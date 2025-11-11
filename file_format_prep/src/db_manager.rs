@@ -1,6 +1,8 @@
 use crate::storage::column_structs::ColHeader;
 use crate::storage::metadata_structs::DbMetadata;
-use crate::constants::{METADATA_FILE_PATH, DB_DATA_DIR};
+use crate::constants::{METADATA_FILE_PATH, DB_DATA_DIR, AllowedColTypes};
+use crate::csv_reader;
+
 use std::fs::File;
 use std::io::{Error as io_err, Write};
 use std::io::ErrorKind as err_kind;
@@ -18,6 +20,111 @@ impl DbManager
         DbManager{
             db_meta: None
         }
+    }
+
+    /// Currently naive implementation just to create some files for our db
+    pub fn init_from_csv(&mut self, csv_path: &str)
+    {
+        let (types, names, col_data) = csv_reader::read_csv(&csv_path, b'\t');
+        let metadata = match DbMetadata::new(types, names)
+        {
+            Ok(m) => m,
+            Err(e) => panic!("{e}") 
+        };
+
+        match metadata.save_to_file(DB_DATA_DIR)
+        {
+            Ok(_) => (),
+            Err(e) => panic!("{e}")
+        }
+
+        let col_names = metadata.col_names();
+        let col_types = metadata.col_types();
+
+        for (idx, col_data_vec) in col_data.iter().enumerate()
+        {
+            let col_type = AllowedColTypes::from_u8(*col_types.get(idx).unwrap()).unwrap();
+            let col_name = col_names.get(idx).unwrap().clone();
+
+            let mut col_h = ColHeader::new_empty(col_type, col_name).unwrap();
+
+            let (_, mut f) = col_h.save_to_file(DB_DATA_DIR).unwrap();
+
+            let mut buf = [0; 64];
+            let buf_len = buf.len();
+            let mut buf_idx = 0;
+            let mut vals: Vec<u8>; 
+
+            for val in col_data_vec
+            {
+                if col_type == AllowedColTypes::StrType
+                {
+                    vals = val.as_bytes().try_into().unwrap();
+                }
+                else
+                {
+                    let int_val: i64 = val.parse().unwrap();
+                    vals = int_val.to_be_bytes().try_into().unwrap();
+                }
+
+                    f = self.populate_buf(
+                        &mut buf_idx, 
+                        buf_len, 
+                        &mut buf, 
+                        &vals, 
+                        f, 
+                        &mut col_h);
+            }
+
+            // We have written all data apart from last chunk to the file
+            // and this chunk is already whole in buf 
+            if idx == col_data.len() - 1 && buf_idx != 0
+            {
+                let _ = self.save_data_chunk_to_file(
+                    f, 
+                    &mut col_h, 
+                    buf_idx, 
+                    &mut buf
+                );
+            }
+        }
+
+        metadata.save_to_file(METADATA_FILE_PATH).unwrap();
+        self.db_meta = Some(metadata);
+    }
+
+    fn populate_buf(
+        &mut self,
+        buf_idx: &mut usize, 
+        buf_len: usize, 
+        buf: &mut [u8; 64],
+        vals: &[u8],
+        mut f: File,
+        col_h: &mut ColHeader
+    ) -> File
+    {
+        for c in vals
+        {
+            let buf_val = buf.get_mut(*buf_idx).unwrap();
+
+            *buf_val = *c;
+            *buf_idx += 1;
+
+            // only when full buff we save chunk
+            if *buf_idx >= buf_len
+            {
+                f = self.save_data_chunk_to_file(
+                    f, 
+                    col_h, 
+                    *buf_idx, 
+                    buf).unwrap();
+
+                *buf_idx = 0;
+            }
+        }
+
+        // it may happen that loop ends and we didnt save, cause buff was not full, but thats intended
+        f
     }
 
     pub fn start_db(&mut self) -> Result<(), io_err>
