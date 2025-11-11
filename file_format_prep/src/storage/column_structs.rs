@@ -7,8 +7,12 @@ use std::fmt;
 
 use std::io::Error as io_err;
 use crate::errors::io_other_err_wrapper;
-use crate::constants::{MAGIC_WORD, MAX_FILE_SIZE, DB_DATA_DIR};
+use crate::constants::{MAGIC_WORD, MAX_FILE_SIZE, AllowedColTypes};
 use crate::storage::string_handlers::{StrLenCheckType, read_string_from_buf};
+
+#[cfg(test)]
+#[path = "../tests/test_column_structs.rs"]
+mod test_column_structs;
 
 const COL_HEADER_MIN_SIZE: usize = 14;
 const COL_HEADER_DATA_SIZE_OFFSET: u64 = 8;
@@ -19,7 +23,7 @@ pub struct ColHeader
     magic_word: u32,    // magic word saying that this is our db file
     col_id: u16,        // equal to file number - we may have many files for 
                         // one column
-    col_type: u8,       // either 1 - string or 0 - i64
+    col_type: AllowedColTypes,       // either 1 - string or 0 - i64
     is_overflow: bool,  // tells us if there are more files with this col data
                         // last file in sequence will have it set to false
     size_of_data: u32,  // size of data without metadata
@@ -30,17 +34,12 @@ impl ColHeader
 {
     pub fn new(
         col_id: u16,
-        col_type: u8,
+        col_type: AllowedColTypes,
         is_overflow: bool,
         size_of_data: u32,
         col_name: String
     ) -> Result<ColHeader, io_err>
     {
-        if col_type > 1
-        {
-            return Err(io_other_err_wrapper("ColHeader - new_all_data - got unsupported col type"));
-        }
-
         check_col_name_correctness(&col_name)?;
 
         Ok(ColHeader { 
@@ -53,7 +52,7 @@ impl ColHeader
     }
 
     pub fn new_empty(
-        col_type: u8, 
+        col_type: AllowedColTypes, 
         col_name: String
     ) -> Result<ColHeader, io_err>
     {
@@ -65,28 +64,47 @@ impl ColHeader
     /// and returns new ColHeader object
     pub fn create_next(&self) -> Result<ColHeader, io_err>
     {
+        let is_overflow = false;
+        let size_of_data = 0;
+
         ColHeader::new(
             self.col_id + 1, 
             self.col_type, 
-            false, 
-            0, 
+            is_overflow, 
+            size_of_data, 
             self.col_name.clone())
     }
 
-    pub fn save_to_file(&self) -> Result<(String, File), io_err>
+    pub fn save_to_file(&self, path: &str) -> Result<(String, File), io_err>
     {
         // Function returns file_name of created file and its File Handler
         // 
         // In save_to_file function we always create a new file even if it 
         // already existed, this function should be invoked only once when 
         // creating column file for the first time
-        let file_name = format!("{}/{}_{}", DB_DATA_DIR, self.col_name, self.col_id);
+        if path.len() == 0
+        {
+            return Err(io_other_err_wrapper("ColHeader - save_to_file - path len == 0"));
+        }
+
+        let last_path_char = path.as_bytes()[path.len() - 1];
+        let file_name: String;
+
+        if last_path_char == b'/'
+        {
+            file_name = format!("{}{}_{}", path, self.col_name, self.col_id);
+        }
+        else 
+        {
+            file_name = format!("{}/{}_{}", path, self.col_name, self.col_id);
+        }
+
         let mut f = File::create(&file_name)?;
 
         let null_terminator = [b'\0'];
         let header_size = mem::size_of_val(&self.magic_word)
             + mem::size_of_val(&self.col_id)
-            + mem::size_of_val(&self.col_type)
+            + mem::size_of_val(&AllowedColTypes::to_u8(&self.col_type))
             + mem::size_of_val(&self.is_overflow)
             + mem::size_of_val(&self.size_of_data)
             + self.col_name.len() + 1;
@@ -99,7 +117,7 @@ impl ColHeader
 
         f.write(&self.magic_word.to_be_bytes())?;
         f.write(&self.col_id.to_be_bytes())?;
-        f.write(&self.col_type.to_be_bytes())?;
+        f.write(&AllowedColTypes::to_u8(&self.col_type).to_be_bytes())?;
 
         let is_overflow: u8 = self.is_overflow.try_into().unwrap();
 
@@ -122,6 +140,7 @@ impl ColHeader
         buf: &[u8],
     ) -> Result<ColHeader, io_err>
     {
+        // TODO: add better checking if we haave enough bytes to read
         if (bytes_read - *curr_buf_idx) < COL_HEADER_MIN_SIZE
         {
             return Err(io_other_err_wrapper(&format!("To read column header we need to have buffer size at least: {}", COL_HEADER_MIN_SIZE)));
@@ -142,14 +161,14 @@ impl ColHeader
                             buf[4..6]
                             .try_into()
                             .unwrap());
-        let col_type = buf[6];
+        let col_type = match AllowedColTypes::from_u8(buf[6])
+                        {
+                            Ok(v) => v,
+                            Err(e) => return Err(io_other_err_wrapper(&e))
+                        };
 
-        if col_type > 1
-        {
-            return Err(io_other_err_wrapper("ColHeader - read_from_buf - unsupported col type"));
-        }
+        let is_overflow: bool = buf[7] == 1;
 
-        let is_overflow = buf[7] == 1;
         // We allow size of data to be 0
         let size_of_data = u32::from_be_bytes(
                     buf[8..12]
@@ -236,7 +255,7 @@ impl ColHeader
         self.col_id
     }
 
-    pub fn col_type(&self) -> u8 {
+    pub fn col_type(&self) -> AllowedColTypes {
         self.col_type
     }
 
@@ -259,7 +278,7 @@ impl fmt::Display for ColHeader {
         writeln!(f, "ColHeader:")?;
         writeln!(f, "  magic_word: 0x{:X}", self.magic_word)?;
         writeln!(f, "  col_id: {}", self.col_id)?;
-        writeln!(f, "  col_type: {}", self.col_type)?;
+        writeln!(f, "  col_type: {:?}", self.col_type)?;
         writeln!(f, "  is_overflow: {}", self.is_overflow)?;
         writeln!(f, "  size_of_data: {}", self.size_of_data)?;
         writeln!(f, "  col_name: {}", self.col_name)?;
@@ -275,6 +294,7 @@ pub struct ColData
 
 
 
+// TODO: we shouldnt return io_err everywhere
 fn check_col_name_correctness(col_name: &String) -> Result<(), io_err>
 {
     if col_name.len() > 255

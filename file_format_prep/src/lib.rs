@@ -3,3 +3,6 @@ pub mod storage;
 pub mod errors;
 pub mod constants;
 pub mod db_manager;
+
+// #[cfg(test)]
+// mod tests;
