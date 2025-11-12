@@ -1,6 +1,6 @@
 use crate::storage::column_structs::{ColHeader, ColData};
 use crate::storage::metadata_structs::DbMetadata;
-use crate::constants::{METADATA_FILE_PATH, DB_DATA_DIR, AllowedColTypes, CHUNK_SIZE};
+use crate::constants::{METADATA_FILE_PATH, DB_DATA_DIR, AllowedColTypes, CHUNK_SIZE_BYTES};
 use crate::csv_reader;
 
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use std::io::{Seek, SeekFrom};
 pub struct DbManager
 {
     db_meta: Option<DbMetadata>,
-    col_data: HashMap<String, ColData>,
+    col_data_map: HashMap<String, ColData>,
     metadata_dir_path: String,
     col_dir_path: String
 }
@@ -23,7 +23,7 @@ impl DbManager
     {
         DbManager{
             db_meta: None,
-            col_data: HashMap::new(),
+            col_data_map: HashMap::new(),
             metadata_dir_path: String::from(METADATA_FILE_PATH),
             col_dir_path: String::from(DB_DATA_DIR),
         }
@@ -49,7 +49,7 @@ impl DbManager
         let col_names = metadata.col_names();
         let col_types = metadata.col_types();
 
-        let mut buf = [0; CHUNK_SIZE];
+        let mut buf = [0; CHUNK_SIZE_BYTES];
         let buf_len = buf.len();
         let mut buf_idx = 0;
         let mut vals: Vec<u8>; 
@@ -78,6 +78,9 @@ impl DbManager
                 if col_type == AllowedColTypes::StrType
                 {
                     vals = val.as_bytes().try_into().unwrap();
+                    // Read strings are not null terminated, we need to add this
+                    // by ourselves
+                    vals.push(b'\0');
                 }
                 else
                 {
@@ -85,13 +88,13 @@ impl DbManager
                     vals = int_val.to_be_bytes().try_into().unwrap();
                 }
 
-                    f = self.populate_buf(
-                        &mut buf_idx, 
-                        buf_len, 
-                        &mut buf, 
-                        &vals, 
-                        f, 
-                        &mut col_h);
+                f = self.populate_buf(
+                    &mut buf_idx, 
+                    buf_len, 
+                    &mut buf, 
+                    &vals, 
+                    f, 
+                    &mut col_h);
             }
 
             // We have written all data apart from last chunk (buf_idx was not 
@@ -174,8 +177,28 @@ impl DbManager
         Ok(())
     }
 
+    /// Function reads whole column data and calculates either mean of its 
+    /// values or counts how many of each character there is 
     pub fn read_col_data(&self, col_name: &str) -> Result<(), String>
     {
+        if self.db_meta.is_none()
+        {
+            return Err(format!("read_col_data - data base is not initialized, db_meta is None"));
+        }
+        if !self.db_meta.as_ref().unwrap().col_names_idxs().contains_key(col_name)
+        {
+            return Err(format!("read_col_data - given col name: {} is not present in database", col_name));
+        }
+
+        let meta = self.db_meta.as_ref().unwrap();
+        let file_names = meta.col_files_paths().get(col_name).unwrap();
+        let mut f = File::open(file_names.get(0).unwrap()).unwrap();
+
+        if !self.col_data_map.contains_key(col_name)
+        {
+            // let col_h = ColHeader::read_from_buf(curr_buf_idx, bytes_read, buf)
+        }
+
         Ok(())
     }
     /// This function TAKES OWNERSHIP of **f**: File. <br>
@@ -193,7 +216,7 @@ impl DbManager
         mut f: File,            
         col_header: &mut ColHeader,
         bytes_read: usize,
-        buf: &[u8; CHUNK_SIZE] 
+        buf: &[u8; CHUNK_SIZE_BYTES] 
     ) ->Result<File, io_err>
     {
         match col_header.increase_data_size(bytes_read as u32)

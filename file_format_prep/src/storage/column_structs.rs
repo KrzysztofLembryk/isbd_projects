@@ -7,8 +7,9 @@ use std::fmt;
 
 use std::io::Error as io_err;
 use crate::errors::io_other_err_wrapper;
-use crate::constants::{MAGIC_WORD, AllowedColTypes, MAX_FILE_SIZE};
+use crate::constants::{MAGIC_WORD, AllowedColTypes, MAX_FILE_SIZE, BATCH_SIZE};
 use crate::storage::string_handlers::{StrLenCheckType, read_string_from_buf};
+use crate::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u};
 
 #[cfg(test)]
 #[path = "../tests/test_column_structs.rs"]
@@ -17,6 +18,9 @@ mod test_column_structs;
 const COL_HEADER_MIN_SIZE: usize = 14;
 const COL_HEADER_DATA_SIZE_OFFSET: u64 = 8;
 const COL_HEADER_OVERFLOW_OFFSET: u64 = 7;
+
+pub type IntColumn = ColData<i64>;
+pub type StrColumn = ColData<String>;
 
 pub struct ColHeader
 {
@@ -79,13 +83,13 @@ impl ColHeader
             self.col_name.clone())
     }
 
+    /// - Function returns file_name of created file and its File Handler
+    ///     - In save_to_file function we always create a new file even if it 
+    ///       already exists, this function should be invoked only once when 
+    ///       creating column file for the first time
+    /// - We do not encode column header data
     pub fn save_to_file(&self, path: &str) -> Result<(String, File), io_err>
     {
-        // Function returns file_name of created file and its File Handler
-        // 
-        // In save_to_file function we always create a new file even if it 
-        // already existed, this function should be invoked only once when 
-        // creating column file for the first time
         if path.len() == 0
         {
             return Err(io_other_err_wrapper("ColHeader - save_to_file - path len == 0"));
@@ -290,14 +294,94 @@ impl fmt::Display for ColHeader {
     }
 }
 
-pub struct ColData
+pub trait ColType 
 {
-    h: ColHeader,
-    data: Vec<u8>
+    fn col_type() -> AllowedColTypes;
 }
 
+impl ColType for i64
+{
+    fn col_type() -> AllowedColTypes {
+        AllowedColTypes::IntType
+    }
+}
+
+impl ColType for String
+{
+    fn col_type() -> AllowedColTypes {
+        AllowedColTypes::StrType 
+    }
+}
+
+pub struct ColData<T: ColType>
+{
+    header: ColHeader,
+    data: Vec<T>
+}
+
+impl<T: ColType> ColData<T>
+{
+    pub fn new(header: ColHeader) -> Result<ColData<T>, String>
+    {
+        if header.col_type() != T::col_type()
+        {
+            return Err(format!("Column type mismatch btwn header and data type"));
+        }
+
+        Ok(ColData {
+            header: header,
+            data: Vec::new()
+        })
+    }
+}
+
+impl ColData<i64>
+{
+    pub fn push(&mut self, val: i64) -> Result<(), &str>
+    {
+        if self.data.len() > BATCH_SIZE
+        {
+            return Err("Data stored will be greater than batch size");
+        }
+        self.header.increase_data_size(std::mem::size_of::<i64>() as u32)?;
+        self.data.push(val);
+        Ok(())
+    }
+
+    fn delta_encode(&self) -> Vec<i64>
+    {
+        delta_encode(&self.data)
+    }
+
+    pub fn vle_encode(&self) -> Vec<u8>
+    {
+        let delta_encoded_vec = self.delta_encode();
+        let mut vle_encoded_vec: Vec<u8> = Vec::new();
 
 
+        // First value in vec is minimum, and can be negative, but 
+        // following values are differences btwn minimum and other values
+        // thus they are non-negative so we can safely cast them to u64
+        for (idx, val) in delta_encoded_vec.iter().enumerate()
+        {
+            if idx == 0
+            {
+                vle_encode_i(&mut vle_encoded_vec, *val);
+            }
+            else 
+            {
+                vle_encode_u(&mut vle_encoded_vec, *val as u64);
+            }
+        }
+
+        vle_encoded_vec
+    }
+
+}
+
+//##############################################################################
+//######################## PRIVATE HELPER FUNCTIONS ############################
+//##############################################################################
 // TODO: we shouldnt return io_err everywhere
 fn check_col_name_correctness(col_name: &String) -> Result<(), io_err>
 {
@@ -318,3 +402,4 @@ fn check_col_name_correctness(col_name: &String) -> Result<(), io_err>
     }
     Ok(())
 }
+

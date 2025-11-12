@@ -129,6 +129,7 @@ impl  DbMetadata  {
         DbMetadata::new(Vec::new(), Vec::new())
     }
 
+    /// We do not encode metadata when saving to file
     pub fn save_to_file(&self, path: &str) -> Result<(), io_err>
     {
         let mut f = File::create(path)?;
@@ -362,6 +363,11 @@ impl  DbMetadata  {
     pub fn col_files_paths(&self) -> &HashMap<String, Vec<String>> 
     {
         &self.col_files_paths
+    }
+
+    pub fn col_names_idxs(&self) -> &HashMap<String, usize>
+    {
+        &self.col_names_idxs
     }
 }
 
