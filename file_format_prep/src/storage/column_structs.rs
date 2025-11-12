@@ -7,7 +7,7 @@ use std::fmt;
 
 use std::io::Error as io_err;
 use crate::errors::io_other_err_wrapper;
-use crate::constants::{MAGIC_WORD, AllowedColTypes};
+use crate::constants::{MAGIC_WORD, AllowedColTypes, MAX_FILE_SIZE};
 use crate::storage::string_handlers::{StrLenCheckType, read_string_from_buf};
 
 #[cfg(test)]
@@ -113,8 +113,8 @@ impl ColHeader
             + mem::size_of_val(&self.size_of_data)
             + self.col_name.len() + 1;
 
-        // In one file we can have only u32::MAX bytes with HEADERS bytes
-        if u32::MAX - (header_size as u32) < self.size_of_data
+        // In one file we can have only MAX_FILE_SIZE bytes with HEADERS bytes
+        if MAX_FILE_SIZE - (header_size as u32) < self.size_of_data
         {
             return Err(io_other_err_wrapper("ColHeader - save_to_file - size_of_data + header data size exceeds u32::MAX"));
         }
@@ -290,11 +290,11 @@ impl fmt::Display for ColHeader {
     }
 }
 
-// pub struct ColData
-// {
-//     h: ColHeader,
-//     data: Vec<u8>
-// }
+pub struct ColData
+{
+    h: ColHeader,
+    data: Vec<u8>
+}
 
 
 

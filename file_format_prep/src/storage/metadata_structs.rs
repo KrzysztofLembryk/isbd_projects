@@ -222,7 +222,8 @@ impl  DbMetadata  {
 
                 if col_count == 0 && bytes_read == METADATA_INIT_STAGE_SIZE
                 {
-                    // this is empty data base case
+                    // No columns means empty db so we just return it without
+                    // doing next steps
                     return DbMetadata::new_all_data(
                                                     col_count, 
                                                     col_files_count, 

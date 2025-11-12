@@ -1,8 +1,9 @@
-use crate::storage::column_structs::ColHeader;
+use crate::storage::column_structs::{ColHeader, ColData};
 use crate::storage::metadata_structs::DbMetadata;
-use crate::constants::{METADATA_FILE_PATH, DB_DATA_DIR, AllowedColTypes};
+use crate::constants::{METADATA_FILE_PATH, DB_DATA_DIR, AllowedColTypes, CHUNK_SIZE};
 use crate::csv_reader;
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Error as io_err, Write};
 use std::io::ErrorKind as err_kind;
@@ -10,7 +11,10 @@ use std::io::{Seek, SeekFrom};
 
 pub struct DbManager
 {
-    db_meta: Option<DbMetadata>
+    db_meta: Option<DbMetadata>,
+    col_data: HashMap<String, ColData>,
+    metadata_dir_path: String,
+    col_dir_path: String
 }
 
 impl DbManager
@@ -18,42 +22,56 @@ impl DbManager
     pub fn new() -> DbManager
     {
         DbManager{
-            db_meta: None
+            db_meta: None,
+            col_data: HashMap::new(),
+            metadata_dir_path: String::from(METADATA_FILE_PATH),
+            col_dir_path: String::from(DB_DATA_DIR),
         }
     }
 
     /// Currently naive implementation just to create some files for our db
-    pub fn init_from_csv(&mut self, csv_path: &str)
+    pub fn init_from_csv(&mut self, csv_path: &str) -> Result<(), String>
     {
-        let (types, names, col_data) = csv_reader::read_csv(&csv_path, b'\t');
+        let (types, names, col_data) = csv_reader::read_csv(csv_path, b'\t');
+
         let metadata = match DbMetadata::new(types, names)
         {
             Ok(m) => m,
-            Err(e) => panic!("{e}") 
+            Err(e) =>  return Err(format!("init_from_csv - metadata::new - {}", e))
         };
 
-        match metadata.save_to_file(DB_DATA_DIR)
+        match metadata.save_to_file(METADATA_FILE_PATH)
         {
             Ok(_) => (),
-            Err(e) => panic!("{e}")
+            Err(e) => return Err(format!("init_from_csv - metdata::save_to_file - {}", e))
         }
 
         let col_names = metadata.col_names();
         let col_types = metadata.col_types();
 
+        let mut buf = [0; CHUNK_SIZE];
+        let buf_len = buf.len();
+        let mut buf_idx = 0;
+        let mut vals: Vec<u8>; 
+
+        // What this loop does: 
+        // - In col_data we store vectors of strings, each vector stores data
+        //   for separate column
+        // - We get col_type and col_name so that we can create new col_header
+        //   and save it to file; in the same file we will also save col_data
+        //   by appending to this file
+        // - Then we iterate over col_data_vec and check if value should be 
+        //   string or i64, we make array of bytes from it and pass it to 
+        //   populate_buf function that iterates over this array of bytes
+        // - If populate_buf buf fills buf it saves data chunk to a file
         for (idx, col_data_vec) in col_data.iter().enumerate()
         {
-            let col_type = AllowedColTypes::from_u8(*col_types.get(idx).unwrap()).unwrap();
+            
+            let col_type = AllowedColTypes::from_u8(*col_types.get(idx).unwrap())?;
             let col_name = col_names.get(idx).unwrap().clone();
-
             let mut col_h = ColHeader::new_empty(col_type, col_name).unwrap();
 
             let (_, mut f) = col_h.save_to_file(DB_DATA_DIR).unwrap();
-
-            let mut buf = [0; 64];
-            let buf_len = buf.len();
-            let mut buf_idx = 0;
-            let mut vals: Vec<u8>; 
 
             for val in col_data_vec
             {
@@ -76,8 +94,9 @@ impl DbManager
                         &mut col_h);
             }
 
-            // We have written all data apart from last chunk to the file
-            // and this chunk is already whole in buf 
+            // We have written all data apart from last chunk (buf_idx was not 
+            // zeroed in populate buf) to the file; this chunk is already whole 
+            // in buf 
             if idx == col_data.len() - 1 && buf_idx != 0
             {
                 let _ = self.save_data_chunk_to_file(
@@ -89,8 +108,14 @@ impl DbManager
             }
         }
 
-        metadata.save_to_file(METADATA_FILE_PATH).unwrap();
+        match metadata.save_to_file(METADATA_FILE_PATH)
+        {
+            Ok(()) => (),
+            Err(e) => return Err(format!("second metdata save to file, {}", e))
+        }
         self.db_meta = Some(metadata);
+
+        Ok(())
     }
 
     fn populate_buf(
@@ -131,7 +156,7 @@ impl DbManager
     {
         // To start db, db metadata file must be present
         self.db_meta = Some(
-            match DbMetadata::read_from_file(METADATA_FILE_PATH)
+            match DbMetadata::read_from_file(&self.metadata_dir_path)
             {
                 Ok(meta) => meta,
                 Err(e) => {
@@ -139,7 +164,7 @@ impl DbManager
                     if e.kind() == err_kind::NotFound 
                     {
                         let db = DbMetadata::new_empty()?;
-                        db.save_to_file(METADATA_FILE_PATH)?;
+                        db.save_to_file(&self.metadata_dir_path)?;
                         db
                     }
                     else {return Err(e);}
@@ -149,11 +174,15 @@ impl DbManager
         Ok(())
     }
 
+    pub fn read_col_data(&self, col_name: &str) -> Result<(), String>
+    {
+        Ok(())
+    }
     /// This function TAKES OWNERSHIP of **f**: File. <br>
     /// It returns either the same f or a file hook to newly created file
-    /// - Function appends bytes_read bytes to a given column file
+    /// - Function appends bytes_read bytes to a given file
     /// - If given file has to little space, it creates new one while also 
-    /// updating metadata
+    /// updating metadata and creating new ColHeader object
     /// - we expect to write chunk_size bytes all the time except last time
     /// 
     /// - db manager first checks if col exists, 
@@ -164,7 +193,7 @@ impl DbManager
         mut f: File,            
         col_header: &mut ColHeader,
         bytes_read: usize,
-        buf: &[u8]      // TODO: buf max len is CHUNK SIZE
+        buf: &[u8; CHUNK_SIZE] 
     ) ->Result<File, io_err>
     {
         match col_header.increase_data_size(bytes_read as u32)
@@ -184,7 +213,7 @@ impl DbManager
 
                 // We no longer need old col_header, we will write to a new file
                 *col_header = col_header.create_next()?;
-                let (file_path, new_f) = col_header.save_to_file(DB_DATA_DIR)?;
+                let (file_path, new_f) = col_header.save_to_file(&self.col_dir_path)?;
 
                 // Now we need to update our metadata
                 self.db_meta

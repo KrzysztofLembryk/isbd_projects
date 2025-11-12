@@ -11,9 +11,15 @@ use file_format_prep::db_manager::DbManager;
 
 fn main() {
 
+    println!("main db_manager new");
     let mut db_manager = DbManager::new();
-    db_manager.init_from_csv("./db_data/sample_med.tsv");
-    // db_manager.start_db().unwrap();
+    println!("init csv");
+    // match db_manager.init_from_csv("./db_data/sample_med.tsv")
+    // {
+    //     Ok(_) => (),
+    //     Err(e) => panic!("{e}")
+    // }
+    db_manager.start_db().unwrap();
 
 }
 
