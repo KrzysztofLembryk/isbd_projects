@@ -1,4 +1,4 @@
-use crate::constants::{AllowedColTypes, DB_DATA_DIR, MAGIC_WORD, MAX_FILE_SIZE};
+use crate::constants::{AllowedColTypes, CHUNK_SIZE_BYTES, DB_DATA_DIR, MAGIC_WORD, MAX_FILE_SIZE};
 use crate::storage::string_handlers::{StrLenCheckType, read_string_from_buf, check_col_name_correctness};
 use crate::errors::io_other_err_wrapper;
 
@@ -200,7 +200,7 @@ impl ColHeader
     pub fn increase_data_size(
         &mut self, 
         new_data_len: u32
-    ) -> Result<(), &str>
+    ) -> Result<(), usize>
     {
         // When we read next data chunk we want to append this data to 
         // file, so we firstly need to update metadata about data size in this 
@@ -216,7 +216,9 @@ impl ColHeader
         {
             None => {
                 self.is_overflow = true;
-                return Err("new data chunk won't fit in curr file");
+                let diff = CHUNK_SIZE_BYTES - self.size_of_data as usize;
+                self.size_of_data = CHUNK_SIZE_BYTES as u32;
+                return Err(diff);
             },
             Some(new_size) => new_size
         };

@@ -32,6 +32,28 @@ impl DbManager
         }
     }
 
+    pub fn init_db(&mut self) -> Result<(), io_err>
+    {
+        // To start db, db metadata file must be present
+        self.db_meta = Some(
+            match DbMetadata::read_from_file(&self.metadata_dir_path)
+            {
+                Ok(meta) => meta,
+                Err(e) => {
+                    // if there is no metadata file, we create a new one
+                    if e.kind() == err_kind::NotFound 
+                    {
+                        let db = DbMetadata::new_empty()?;
+                        db.save_to_file(&self.metadata_dir_path)?;
+                        db
+                    }
+                    else {return Err(e);}
+                }
+            }
+        );
+        Ok(())
+    }
+
     /// Currently naive implementation just to create some files for our db
     pub fn init_from_csv(&mut self, csv_path: &str) -> Result<(), String>
     {
@@ -76,42 +98,42 @@ impl DbManager
 
             let (_, mut f) = col_h.save_to_file(DB_DATA_DIR).unwrap();
 
-            for val in col_data_vec
-            {
-                if col_type == AllowedColTypes::StrType
-                {
-                    vals = val.as_bytes().try_into().unwrap();
-                    // Read strings are not null terminated, we need to add this
-                    // by ourselves
-                    vals.push(b'\0');
-                }
-                else
-                {
-                    let int_val: i64 = val.parse().unwrap();
-                    vals = int_val.to_be_bytes().try_into().unwrap();
-                }
+            // for val in col_data_vec
+            // {
+            //     if col_type == AllowedColTypes::StrType
+            //     {
+            //         vals = val.as_bytes().try_into().unwrap();
+            //         // Read strings are not null terminated, we need to add this
+            //         // by ourselves
+            //         vals.push(b'\0');
+            //     }
+            //     else
+            //     {
+            //         let int_val: i64 = val.parse().unwrap();
+            //         vals = int_val.to_be_bytes().try_into().unwrap();
+            //     }
 
-                f = self.populate_buf(
-                    &mut buf_idx, 
-                    buf_len, 
-                    &mut buf, 
-                    &vals, 
-                    f, 
-                    &mut col_h);
-            }
+            //     f = self.populate_buf(
+            //         &mut buf_idx, 
+            //         buf_len, 
+            //         &mut buf, 
+            //         &vals, 
+            //         f, 
+            //         &mut col_h);
+            // }
 
             // We have written all data apart from last chunk (buf_idx was not 
             // zeroed in populate buf) to the file; this chunk is already whole 
             // in buf 
-            if idx == col_data.len() - 1 && buf_idx != 0
-            {
-                let _ = self.save_data_chunk_to_file(
-                    f, 
-                    &mut col_h, 
-                    buf_idx, 
-                    &mut buf
-                );
-            }
+            // if idx == col_data.len() - 1 && buf_idx != 0
+            // {
+            //     let _ = self.save_data_chunk_to_file(
+            //         f, 
+            //         &mut col_h, 
+            //         buf_idx, 
+            //         &mut buf
+            //     );
+            // }
         }
 
         match metadata.save_to_file(METADATA_FILE_PATH)
@@ -124,61 +146,6 @@ impl DbManager
         Ok(())
     }
 
-    fn populate_buf(
-        &mut self,
-        buf_idx: &mut usize, 
-        buf_len: usize, 
-        buf: &mut [u8; CHUNK_SIZE_BYTES],
-        vals: &[u8],
-        mut f: File,
-        col_h: &mut ColHeader
-    ) -> File
-    {
-        for c in vals
-        {
-            let buf_val = buf.get_mut(*buf_idx).unwrap();
-
-            *buf_val = *c;
-            *buf_idx += 1;
-
-            // only when full buff we save chunk
-            if *buf_idx >= buf_len
-            {
-                f = self.save_data_chunk_to_file(
-                    f, 
-                    col_h, 
-                    *buf_idx, 
-                    buf).unwrap();
-
-                *buf_idx = 0;
-            }
-        }
-
-        // it may happen that loop ends and we didnt save, cause buff was not full, but thats intended
-        f
-    }
-
-    pub fn init_db(&mut self) -> Result<(), io_err>
-    {
-        // To start db, db metadata file must be present
-        self.db_meta = Some(
-            match DbMetadata::read_from_file(&self.metadata_dir_path)
-            {
-                Ok(meta) => meta,
-                Err(e) => {
-                    // if there is no metadata file, we create a new one
-                    if e.kind() == err_kind::NotFound 
-                    {
-                        let db = DbMetadata::new_empty()?;
-                        db.save_to_file(&self.metadata_dir_path)?;
-                        db
-                    }
-                    else {return Err(e);}
-                }
-            }
-        );
-        Ok(())
-    }
 
     /// Function reads whole column data and calculates either mean of its 
     /// values or counts how many of each character there is 
@@ -204,60 +171,6 @@ impl DbManager
 
         Ok(())
     }
-    /// This function TAKES OWNERSHIP of **f**: File. <br>
-    /// It returns either the same f or a file hook to newly created file
-    /// - Function appends bytes_read bytes to a given file
-    /// - If given file has to little space, it creates new one while also 
-    /// updating metadata and creating new ColHeader object
-    /// - we expect to write chunk_size bytes all the time except last time
-    /// 
-    /// - db manager first checks if col exists, 
-    ///     - if it does db will open its file and pass handler to this function
-    ///     - if it doesnt it creates file and passes handler here
-    pub fn save_data_chunk_to_file(
-        &mut self,
-        mut f: File,            
-        col_header: &mut ColHeader,
-        bytes_read: usize,
-        buf: &[u8; CHUNK_SIZE_BYTES] 
-    ) ->Result<File, io_err>
-    {
-        match col_header.increase_data_size(bytes_read as u32)
-        {
-            Ok(_) => {
-                // We will append to a file so we always know were to write
-                f.seek(SeekFrom::End(0))?;
-                f.write(&buf[..bytes_read])?;
-                return Ok(f);
-            }
-            Err(e) => {
-                println!("save_data_chunk_to_file: {e}");
-
-                // not enough free space in file, thus we need to create a new
-                // file, but before that we save updated col_header to a file
-                col_header.modify_data_size_in_file(&mut f)?;
-
-                // We no longer need old col_header, we will write to a new file
-                *col_header = col_header.create_next()?;
-                let (file_path, new_f) = col_header.save_to_file(&self.col_dir_path)?;
-
-                // Now we need to update our metadata
-                self.db_meta
-                    .as_mut()
-                    .unwrap()
-                    .append_new_file_path(col_header.col_name(), file_path)?;
-
-                // And now we recursively invoke this function, since now we 
-                // will go into OK branch
-                return self.save_data_chunk_to_file(
-                    new_f, 
-                    col_header, 
-                    bytes_read, 
-                    buf);
-            }
-        }
-    }
-    // pub fn save_data_to_column(col_name: &String, )
 
     pub fn run(&mut self, column_names: &Vec<String>) -> Result<(), &str>
     {

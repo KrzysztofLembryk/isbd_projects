@@ -63,50 +63,9 @@ impl<T: ColType> ColData<T>
 
 impl ColData<i64>
 {
-    pub fn is_full(&self) -> bool
-    {
-        self.data.len() >= BATCH_SIZE
-    }
-
-    pub fn get_mut_header(&mut self) -> &mut ColHeader
-    {
-        &mut self.header
-    }
-
-    pub fn push(&mut self, val: i64) -> Result<(), &str>
-    {
-        if self.is_full()
-        {
-            return Err("Data stored will be greater than batch size");
-        }
-        self.data.push(val);
-        Ok(())
-    }
-
-    fn vle_encode(&self) -> Vec<u8>
-    {
-        let delta_encoded_vec = delta_encode(&self.data);
-        let mut vle_encoded_vec: Vec<u8> = Vec::new();
-
-
-        // First value in vec is minimum, and can be negative, but 
-        // following values are differences btwn minimum and other values
-        // thus they are non-negative so we can safely cast them to u64
-        for (idx, val) in delta_encoded_vec.iter().enumerate()
-        {
-            if idx == 0
-            {
-                vle_encode_i(&mut vle_encoded_vec, *val);
-            }
-            else 
-            {
-                vle_encode_u(&mut vle_encoded_vec, *val as u64);
-            }
-        }
-
-        vle_encoded_vec
-    }
-
+    // ########################################################################
+    // ############################# PUBLIC API ###############################
+    // ########################################################################
     pub fn read_from_file(mut f: File) -> ColData<i64>
     {
         // TODO: ADD PROPER ERROR HANDLIIIING with my-defined Errors
@@ -133,7 +92,7 @@ impl ColData<i64>
             println!("size_read: {size_read}");
             if buf_idx >= bytes_read
             {
-                let is_break = ColData::read_new_data(
+                let is_break = ColData::_read_new_data(
                     &mut buf_idx, 
                     &mut bytes_read, 
                     &mut size_read, 
@@ -152,7 +111,7 @@ impl ColData<i64>
             // in vle encoded sequence, so we need to decode it into i64
             if byte & 0x80 == 0
             {
-                let decoded_val = ColData::decode_bytes(
+                let decoded_val = ColData::_decode_bytes(
                                 &mut first_value, 
                                 &mut bytes, 
                                 &mut min_val);
@@ -186,7 +145,241 @@ impl ColData<i64>
         }
     }
 
-    fn decode_bytes(
+    /// - DB manager firstly needs to create ColHeader and then ColData so that
+    /// we know to which file we need to write stuff.
+    /// - DB manager will read strings from files, convert BATCH_SIZE of them 
+    /// into vector of i64 and we will get this vector and will need to 
+    /// serialize it and save to file
+    pub fn save_to_file(&mut self, ints: &Vec<i64>)
+    {
+        // TODO: better error handling
+        if ints.len() > BATCH_SIZE
+        {
+            panic!("ColData - save_to_file - vector of data has greater size than BATCH_SIZE");
+        }
+
+        let mut f: File = self._get_file_handle();
+        let ints_encoded = ColData::_vle_encode(ints);
+
+        f = self._do_the_save(&ints_encoded, f);
+
+        self.file_handle = Some(f);
+    }
+
+    // ########################################################################
+    // ############################ PRIVATE API ###############################
+    // ########################################################################
+    fn _read_new_data(
+        buf_idx: &mut usize, 
+        bytes_read: &mut usize,
+        size_read: &mut usize,
+        header: &mut ColHeader,
+        buf: &mut [u8; CHUNK_SIZE_BYTES],    
+        f: &mut File
+    ) -> bool
+    {
+        *buf_idx = 0;
+        *bytes_read = f.read(buf).unwrap();
+
+        // Here we just add bytes_read since we are not reading header data now
+        *size_read += *bytes_read;
+
+        if *size_read > header.size_of_data() as usize
+        {
+            panic!("Size of data we read is greater than size of data stored in file's header");
+        }
+
+        if *bytes_read == 0 
+        {
+            if header.is_overflow()
+            {
+                // If overflow, this means that there are more files 
+                // for this column. Here we will open next file, 
+                // create new header and continue reading from buffer
+                *f = ColData::_continue_to_next_file(
+                                                    header, 
+                                                    buf_idx, 
+                                                    bytes_read, 
+                                                    buf);
+                // We need to substract buf_idx since first bytes we read from
+                // file are headers bytes, thus nbr of bytes of data we read
+                // is bytes_read - buf_idx 
+                *size_read = *bytes_read - *buf_idx;
+            }
+            else if *size_read != header.size_of_data() as usize
+            {
+                panic!("We ended reading data from file, but amount of data we read is not equal to data size stored in file header");
+            }
+            else 
+            {
+                // No more data, all was read, we want to break from main loop
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn _continue_to_next_file(
+        col_h: &mut ColHeader, 
+        buf_idx: &mut usize,
+        bytes_read: &mut usize,
+        buf: &mut [u8; CHUNK_SIZE_BYTES],
+    ) -> File
+    {
+        let mut f = File::open(col_h.get_next_file_path()).unwrap();
+
+        *bytes_read = f.read(buf).unwrap();
+        *buf_idx = 0;
+
+        *col_h = ColHeader::read_from_buf(buf_idx, *bytes_read, buf).unwrap();
+
+        f
+    }
+
+
+    fn _get_file_handle(&mut self) -> File
+    {
+        let f: File;
+        if self.first_time_saving
+        {
+            self.first_time_saving = false;
+
+            // we get file handle to created file, to which we will append data
+            (_, f) = self.header.save_to_file(DB_DATA_DIR).unwrap();
+        }
+        else 
+        {
+            // We're not saving for the first time, so there should be file that
+            // we previously created so we can open it
+            if let Some(file) = self.file_handle.take()
+            {
+                f = file;
+            }
+            else 
+            {
+                f = File::open(self.header.get_file_path()).unwrap();
+            }
+        }
+        f
+    }
+
+    fn _do_the_save(
+        &mut self,
+        vals: &[u8],
+        mut f: File,
+    ) -> File
+    {
+        let mut buf = [0u8; CHUNK_SIZE_BYTES];
+        let mut buf_idx = 0;
+
+        // TODO: Probably we could use slicing and just jump CHUNK_SIZE_BYTES in
+        // vals vector
+        for c in vals
+        {
+            let buf_val = buf.get_mut(buf_idx).unwrap();
+
+            *buf_val = *c;
+            buf_idx += 1;
+
+            // only when full buff we save chunk
+            if buf_idx >= CHUNK_SIZE_BYTES
+            {
+                let bytes_read = buf_idx;
+
+                f = self._save_data_chunk_to_file(
+                    f, 
+                    bytes_read, 
+                    &buf).unwrap();
+
+                buf_idx = 0;
+            }
+        }
+
+        // It means that we didnt save last chunk since it wasnt of max size
+        if buf_idx != 0
+        {
+            f = self._save_data_chunk_to_file(
+                f, 
+                buf_idx, 
+                &buf).unwrap();
+        }
+
+        f
+    }
+
+    /// This function TAKES OWNERSHIP of **f**: File. <br>
+    /// It returns either the same f or a file hook to newly created file
+    /// - Function appends bytes_read bytes to a given file
+    /// - If given file has to little space, it creates new one while also 
+    /// updating metadata and creating new ColHeader object
+    fn _save_data_chunk_to_file(
+        &mut self,
+        mut f: File,            
+        bytes_read: usize,
+        buf: &[u8],
+    ) ->Result<File, io_err>
+    {
+        match self.header.increase_data_size(bytes_read as u32)
+        {
+            Ok(_) => {
+                // We will append to a file so we always know were to write
+                f.seek(SeekFrom::End(0))?;
+                f.write(&buf[..bytes_read])?;
+                return Ok(f);
+            }
+            Err(free_space_size) => {
+                println!("Not enough space in file, we will write only a part of a chunk: {} bytes", free_space_size);
+
+                // we save updated col_header to a file
+                self.header.modify_data_size_in_file(&mut f)?;
+
+                // Not enough free space in file, thus we will save as much as 
+                // we can and will create a new file 
+                f.seek(SeekFrom::End(0))?;
+                f.write(&buf[..free_space_size])?;
+
+                // We no longer need old col_header, we will write to a new file
+                self.header = self.header.create_next()?;
+                let (_, new_f) = self.header.save_to_file(DB_DATA_DIR)?;
+
+                // !!!!! REMEMBER TO UPDATE METADATA !!!!!!
+
+                // And now we recursively invoke this function, since now we 
+                // will go into OK branch
+                return self._save_data_chunk_to_file(
+                    new_f, 
+                    bytes_read - free_space_size, 
+                    &buf[free_space_size..bytes_read]);
+            }
+        }
+    }
+
+
+    fn _vle_encode(vals: &Vec<i64>) -> Vec<u8>
+    {
+        let delta_encoded_vec = delta_encode(vals);
+        let mut vle_encoded_vec: Vec<u8> = Vec::new();
+
+
+        // First value in vec is minimum, and can be negative, but 
+        // following values are differences btwn minimum and other values
+        // thus they are non-negative so we can safely cast them to u64
+        for (idx, val) in delta_encoded_vec.iter().enumerate()
+        {
+            if idx == 0
+            {
+                vle_encode_i(&mut vle_encoded_vec, *val);
+            }
+            else 
+            {
+                vle_encode_u(&mut vle_encoded_vec, *val as u64);
+            }
+        }
+
+        vle_encoded_vec
+    }
+
+    fn _decode_bytes(
         first_value: &mut bool, 
         bytes: &mut Vec<u8>,
         min_val: &mut i64,
@@ -215,185 +408,6 @@ impl ColData<i64>
         }
 
         decoded_val
-    }
-
-    fn read_new_data(
-        buf_idx: &mut usize, 
-        bytes_read: &mut usize,
-        size_read: &mut usize,
-        header: &mut ColHeader,
-        buf: &mut [u8; CHUNK_SIZE_BYTES],    
-        f: &mut File
-    ) -> bool
-    {
-        *buf_idx = 0;
-        *bytes_read = f.read(buf).unwrap();
-
-        // Here we just add bytes_read since we are not reading header data now
-        *size_read += *bytes_read;
-
-        if *size_read > header.size_of_data() as usize
-        {
-            panic!("Size of data we read is greater than size of data stored in file's header");
-        }
-
-        if *bytes_read == 0 
-        {
-            if header.is_overflow()
-            {
-                // If overflow, this means that there are more files 
-                // for this column. Here we will open next file, 
-                // create new header and continue reading from buffer
-                *f = ColData::continue_to_next_file(
-                                                    header, 
-                                                    buf_idx, 
-                                                    bytes_read, 
-                                                    buf);
-                // We need to substract buf_idx since first bytes we read from
-                // file are headers bytes, thus nbr of bytes of data we read
-                // is bytes_read - buf_idx 
-                *size_read = *bytes_read - *buf_idx;
-            }
-            else if *size_read != header.size_of_data() as usize
-            {
-                panic!("We ended reading data from file, but amount of data we read is not equal to data size stored in file header");
-            }
-            else 
-            {
-                // No more data, all was read, we want to break from main loop
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn continue_to_next_file(
-        col_h: &mut ColHeader, 
-        buf_idx: &mut usize,
-        bytes_read: &mut usize,
-        buf: &mut [u8; CHUNK_SIZE_BYTES],
-    ) -> File
-    {
-        let mut f = File::open(col_h.get_next_file_path()).unwrap();
-
-        *bytes_read = f.read(buf).unwrap();
-        *buf_idx = 0;
-
-        *col_h = ColHeader::read_from_buf(buf_idx, *bytes_read, buf).unwrap();
-
-        f
-    }
-
-    pub fn create_and_save_to_file(&mut self) -> (String, File)
-    {
-        let encoded_vec = self.vle_encode();
-        self.header.increase_data_size(encoded_vec.len() as u32).unwrap();
-        let (file_name, mut f) = self.header.save_to_file(DB_DATA_DIR).unwrap();
-
-        f.write_all(&encoded_vec).unwrap();
-
-        (file_name, f)
-    }
-
-    pub fn append_to_file(&mut self, mut f: File)
-    {
-        let encoded_vec = self.vle_encode();
-
-        f.write_all(&encoded_vec).unwrap();
-    }
-
-
-    /// - DB manager firstly needs to create ColHeader and then ColData so that
-    /// we know to which file we need to write stuff.
-    /// - DB manager will read strings from files, convert BATCH_SIZE of them 
-    /// into vector of i64 and we will get this vector and will need to 
-    /// serialize it and save to file
-    pub fn save_to_file(&mut self, ints: &Vec<i64>)
-    {
-        // TODO: better error handling
-        if ints.len() > BATCH_SIZE
-        {
-            panic!("ColData - save_to_file - vector of data has greater size than BATCH_SIZE");
-        }
-
-        let mut f: File = self.get_file_handle();
-
-    }
-
-    fn get_file_handle(&mut self) -> File
-    {
-        let f: File;
-        if self.first_time_saving
-        {
-            self.first_time_saving = false;
-
-            // we get file handle to created file, to which we will append data
-            (_, f) = self.header.save_to_file(DB_DATA_DIR).unwrap();
-        }
-        else 
-        {
-            // We're not saving for the first time, so there should be file that
-            // we previously created so we can open it
-            if let Some(file) = self.file_handle.take()
-            {
-                f = file;
-            }
-            else 
-            {
-                f = File::open(self.header.get_file_path()).unwrap();
-            }
-        }
-        f
-    }
-
-    /// This function should be used when we initialize database and create all
-    /// files and need to count bytes etc
-    fn save_data_chunk_to_file(
-        &mut self,
-        mut f: File,            
-        bytes_read: usize,
-        buf: &[u8; CHUNK_SIZE_BYTES],
-        db_meta: &mut DbMetadata
-    ) ->Result<File, io_err>
-    {
-        match self.header.increase_data_size(bytes_read as u32)
-        {
-            Ok(_) => {
-                // We will append to a file so we always know were to write
-                f.seek(SeekFrom::End(0))?;
-                f.write(&buf[..bytes_read])?;
-                return Ok(f);
-            }
-            Err(e) => {
-                println!("save_data_chunk_to_file: {e}");
-
-                // not enough free space in file, thus we need to create a new
-                // file, but before that we save updated col_header to a file
-                self.header.modify_data_size_in_file(&mut f)?;
-
-                // We no longer need old col_header, we will write to a new file
-                self.header = self.header.create_next()?;
-                let (file_path, new_f) = self.header.save_to_file(DB_DATA_DIR)?;
-
-                // Now we need to update our metadata
-                db_meta
-                    .append_new_file_path(self.header.col_name(), file_path)?;
-
-                // And now we recursively invoke this function, since now we 
-                // will go into OK branch
-                return self.save_data_chunk_to_file(
-                    new_f, 
-                    bytes_read, 
-                    buf,
-                    db_meta);
-            }
-        }
-    }
-
-
-    pub fn data(&self) -> &Vec<i64>
-    {
-        &self.data
     }
 }
 
