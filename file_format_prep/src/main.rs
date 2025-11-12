@@ -1,25 +1,51 @@
 // use std::collections::{self, HashMap};
-// use std::fs::File;
-// use std::io::{Read, Write};
+use std::fs::File;
+use std::io::{Read, Write};
 // use std::fs::OpenOptions;
+
+use std::vec;
 
 // use file_format_prep::csv_reader;
 // use file_format_prep::storage::metadata_structs as meta_structs;
 // use file_format_prep::constants::METADATA_FILE_PATH;
 // use file_format_prep::storage::column_structs::{ColHeader};
 use file_format_prep::db_manager::DbManager;
+use file_format_prep::storage::column_structs::{ColData, ColHeader};
+use file_format_prep::constants::AllowedColTypes;
 
 fn main() {
 
-    println!("main db_manager new");
-    let mut db_manager = DbManager::new();
-    println!("init csv");
+    // println!("main db_manager new");
+    // let mut db_manager = DbManager::new();
+    // println!("init csv");
     // match db_manager.init_from_csv("./db_data/sample_med.tsv")
     // {
     //     Ok(_) => (),
     //     Err(e) => panic!("{e}")
     // }
-    db_manager.start_db().unwrap();
+    // db_manager.start_db().unwrap();
+
+    let mut header = ColHeader::new_empty(AllowedColTypes::IntType, String::from("int1")).unwrap();
+
+    let mut col_data: ColData<i64> = ColData::new(header).unwrap();
+
+    let vals: Vec<i64> = vec![1, 4, -5, 0, 10, 8, -2, -4, 0, -5];
+    // let vals: Vec<i64> = vec![1, 50];
+
+    for val in vals
+    {
+        col_data.push(val).unwrap();
+    }
+
+    let (file_path, _) = col_data.create_and_save_to_file();
+
+
+    let new_col = ColData::read_from_file(&file_path);
+
+    let read_data = new_col.data();
+
+    println!("Data after read and decoding ");
+    println!("{:?}", read_data);
 
 }
 

@@ -12,7 +12,8 @@ use std::io::{Seek, SeekFrom};
 pub struct DbManager
 {
     db_meta: Option<DbMetadata>,
-    col_data_map: HashMap<String, ColData>,
+    str_cols_map: HashMap<String, ColData<String>>,
+    int_cols_map: HashMap<String, ColData<i64>>,
     metadata_dir_path: String,
     col_dir_path: String
 }
@@ -23,7 +24,8 @@ impl DbManager
     {
         DbManager{
             db_meta: None,
-            col_data_map: HashMap::new(),
+            str_cols_map: HashMap::new(),
+            int_cols_map: HashMap::new(),
             metadata_dir_path: String::from(METADATA_FILE_PATH),
             col_dir_path: String::from(DB_DATA_DIR),
         }
@@ -125,7 +127,7 @@ impl DbManager
         &mut self,
         buf_idx: &mut usize, 
         buf_len: usize, 
-        buf: &mut [u8; 64],
+        buf: &mut [u8; CHUNK_SIZE_BYTES],
         vals: &[u8],
         mut f: File,
         col_h: &mut ColHeader
@@ -194,7 +196,7 @@ impl DbManager
         let file_names = meta.col_files_paths().get(col_name).unwrap();
         let mut f = File::open(file_names.get(0).unwrap()).unwrap();
 
-        if !self.col_data_map.contains_key(col_name)
+        if !self.str_cols_map.contains_key(col_name)
         {
             // let col_h = ColHeader::read_from_buf(curr_buf_idx, bytes_read, buf)
         }

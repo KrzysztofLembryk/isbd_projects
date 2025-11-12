@@ -3,20 +3,24 @@ pub fn delta_encode(batch: &Vec<i64>) -> Vec<i64>
 {
     let min_val = *batch.iter().min().unwrap();
     let mut delta_encoded_vec: Vec<i64> = vec![min_val];
+    let mut first_encountered = true;
 
     for elem in batch
     {
-        if min_val != *elem
+        // When we encounter our min we skip adding it since we already did this
+        // before loop, but we skip ONLY ONCE, since we allow multiple same vals
+        if first_encountered && min_val == *elem
         {
-            // since we have minimum, we can make all differences non-negative
-            delta_encoded_vec.push(*elem - min_val);
+            first_encountered = false;
+            continue;
         }
+        // since we have minimum, we can make all differences non-negative
+        delta_encoded_vec.push(*elem - min_val);
     }
 
     delta_encoded_vec
 }
 
-// implementation from: https://github.com/r-lyeh-archived/vle/blob/master/vle.hpp
 pub fn vle_encode_u(buf: &mut Vec<u8>, mut val: u64)
 {
     // We encode in little endian, so to decode we read until we find 0 at first

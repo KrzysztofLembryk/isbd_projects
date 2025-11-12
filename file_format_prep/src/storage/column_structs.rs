@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::io::{Write};
 use regex::Regex;
 use std::mem;
@@ -7,9 +7,10 @@ use std::fmt;
 
 use std::io::Error as io_err;
 use crate::errors::io_other_err_wrapper;
-use crate::constants::{MAGIC_WORD, AllowedColTypes, MAX_FILE_SIZE, BATCH_SIZE};
+use crate::constants::{AllowedColTypes, BATCH_SIZE, CHUNK_SIZE_BYTES, DB_DATA_DIR, MAGIC_WORD, MAX_FILE_SIZE};
 use crate::storage::string_handlers::{StrLenCheckType, read_string_from_buf};
-use crate::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u};
+use crate::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle_decode_i, vle_decode_u};
+use crate::storage::metadata_structs::DbMetadata;
 
 #[cfg(test)]
 #[path = "../tests/test_column_structs.rs"]
@@ -18,9 +19,6 @@ mod test_column_structs;
 const COL_HEADER_MIN_SIZE: usize = 14;
 const COL_HEADER_DATA_SIZE_OFFSET: u64 = 8;
 const COL_HEADER_OVERFLOW_OFFSET: u64 = 7;
-
-pub type IntColumn = ColData<i64>;
-pub type StrColumn = ColData<String>;
 
 pub struct ColHeader
 {
@@ -337,9 +335,19 @@ impl<T: ColType> ColData<T>
 
 impl ColData<i64>
 {
+    pub fn is_full(&self) -> bool
+    {
+        self.data.len() >= BATCH_SIZE
+    }
+
+    pub fn get_mut_header(&mut self) -> &mut ColHeader
+    {
+        &mut self.header
+    }
+
     pub fn push(&mut self, val: i64) -> Result<(), &str>
     {
-        if self.data.len() > BATCH_SIZE
+        if self.is_full()
         {
             return Err("Data stored will be greater than batch size");
         }
@@ -348,14 +356,9 @@ impl ColData<i64>
         Ok(())
     }
 
-    fn delta_encode(&self) -> Vec<i64>
+    fn vle_encode(&self) -> Vec<u8>
     {
-        delta_encode(&self.data)
-    }
-
-    pub fn vle_encode(&self) -> Vec<u8>
-    {
-        let delta_encoded_vec = self.delta_encode();
+        let delta_encoded_vec = delta_encode(&self.data);
         let mut vle_encoded_vec: Vec<u8> = Vec::new();
 
 
@@ -377,6 +380,141 @@ impl ColData<i64>
         vle_encoded_vec
     }
 
+    pub fn read_from_file(file_path: &str) -> ColData<i64>
+    {
+        // TODO: We should get this as argument probably
+        // let file_path = format!("{}/{}_{}", 
+        //                             DB_DATA_DIR, 
+        //                             self.header.col_name(), 
+        //                             self.header.col_id()
+        // );
+
+        let mut buf = [0 as u8; CHUNK_SIZE_BYTES];
+
+        let mut f = File::open(file_path).unwrap();
+        let mut bytes_read;
+        let mut buf_idx = 0;
+
+        bytes_read = f.read(&mut buf).unwrap();
+
+        let header = ColHeader::read_from_buf(&mut buf_idx, bytes_read, &buf).unwrap();
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut first_value = true;
+        let mut result_vec: Vec<i64> = Vec::new();
+        let mut min_val: i64 = 0;
+
+        loop 
+        {
+            if buf_idx >= bytes_read
+            {
+                buf_idx = 0;
+                bytes_read = f.read(&mut buf).unwrap();
+
+                if bytes_read == 0 {break;}
+            }
+
+            let byte = buf.get(buf_idx).unwrap();
+            bytes.push(*byte);
+
+            // if most significant bit is 0 it means that this is last byte
+            // in vle encoded sequence, so we need to decode it into i64
+            if byte & 0x80 == 0
+            {
+                // only first value might be negative
+                if first_value
+                {
+                    let decoded_val = vle_decode_i(&bytes);
+
+                    bytes.clear();
+                    result_vec.push(decoded_val);
+
+                    min_val = decoded_val;
+                    first_value = false;
+                }
+                else 
+                {
+                    let decoded_val = vle_decode_u(&bytes);
+                    println!("decoded val: {}", decoded_val);
+                    bytes.clear();
+                    result_vec.push(min_val + (decoded_val as i64));
+
+                }
+            }
+            buf_idx += 1;
+        }
+
+        ColData {
+            header: header,
+            data: result_vec
+        }
+    }
+
+    pub fn create_and_save_to_file(&mut self) -> (String, File)
+    {
+        let encoded_vec = self.vle_encode();
+        let (file_name, mut f) = self.header.save_to_file(DB_DATA_DIR).unwrap();
+
+        f.write_all(&encoded_vec).unwrap();
+
+        (file_name, f)
+    }
+
+    pub fn append_to_file(&mut self, mut f: File)
+    {
+        let encoded_vec = self.vle_encode();
+
+        f.write_all(&encoded_vec).unwrap();
+    }
+
+    /// This function should be used when we initialize database and create all
+    /// files and need to count bytes etc
+    fn save_data_chunk_to_file(
+        &mut self,
+        mut f: File,            
+        bytes_read: usize,
+        buf: &[u8; CHUNK_SIZE_BYTES],
+        db_meta: &mut DbMetadata
+    ) ->Result<File, io_err>
+    {
+        match self.header.increase_data_size(bytes_read as u32)
+        {
+            Ok(_) => {
+                // We will append to a file so we always know were to write
+                f.seek(SeekFrom::End(0))?;
+                f.write(&buf[..bytes_read])?;
+                return Ok(f);
+            }
+            Err(e) => {
+                println!("save_data_chunk_to_file: {e}");
+
+                // not enough free space in file, thus we need to create a new
+                // file, but before that we save updated col_header to a file
+                self.header.modify_data_size_in_file(&mut f)?;
+
+                // We no longer need old col_header, we will write to a new file
+                self.header = self.header.create_next()?;
+                let (file_path, new_f) = self.header.save_to_file(DB_DATA_DIR)?;
+
+                // Now we need to update our metadata
+                db_meta
+                    .append_new_file_path(self.header.col_name(), file_path)?;
+
+                // And now we recursively invoke this function, since now we 
+                // will go into OK branch
+                return self.save_data_chunk_to_file(
+                    new_f, 
+                    bytes_read, 
+                    buf,
+                    db_meta);
+            }
+        }
+    }
+
+
+    pub fn data(&self) -> &Vec<i64>
+    {
+        &self.data
+    }
 }
 
 //##############################################################################
