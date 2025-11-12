@@ -10,7 +10,8 @@ pub const MAX_DATA_STR_LEN: usize = 8 * MB_1;
 pub const MAX_FILE_SIZE: u32 = u32::MAX;
 
 // buff size we read data into, needs to be at least MAX_COL_NAME_LEN bytes
-pub const CHUNK_SIZE_BYTES: usize = MAX_COL_NAME_LEN + 255; pub const BATCH_SIZE: usize = 8192; // number of rows we want to read in one go
+pub const CHUNK_SIZE_BYTES: usize = MAX_COL_NAME_LEN + 255; 
+pub const BATCH_SIZE: usize = 8192; // number of rows we want to read in one go
 
 
 #[derive(Clone, Copy, PartialEq, Debug)]

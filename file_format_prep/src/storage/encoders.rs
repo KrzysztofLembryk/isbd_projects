@@ -58,10 +58,10 @@ pub fn vle_decode_u(buf: &Vec<u8>) -> u64
         out |=  ((byte & 0x7f) as u64) << shift;
         shift += 7;
 
-        if (byte & 0x80) == 0
-        {
-            println!("vle_decode_u - byte & 0x80 == 0 - OK");
-        }
+        // if (byte & 0x80) == 0
+        // {
+        //     println!("vle_decode_u - byte & 0x80 == 0 - OK");
+        // }
     }
 
     out

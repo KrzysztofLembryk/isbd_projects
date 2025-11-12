@@ -345,6 +345,7 @@ impl  DbMetadata  {
     {
         self.col_count
     }
+
     pub fn col_files_count(&self) -> &Vec<u8> 
     {
         &self.col_files_count

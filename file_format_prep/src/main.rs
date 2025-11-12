@@ -13,7 +13,15 @@ use file_format_prep::db_manager::DbManager;
 use file_format_prep::storage::column_structs::{ColData, ColHeader};
 use file_format_prep::constants::AllowedColTypes;
 
-fn main() {
+fn main() 
+{
+    // FLOW
+    // - we create db_manager
+    // - we read metadata file and in db_manager create metadata obj
+    // - we ask user to choose columns' names to calculated stuff
+    // - for given col_name we create ColData obj
+    // - ColData obj takes care of reading all data from file and calculating
+    //   mean or sth
 
     // println!("main db_manager new");
     // let mut db_manager = DbManager::new();
@@ -29,7 +37,8 @@ fn main() {
 
     let mut col_data: ColData<i64> = ColData::new(header).unwrap();
 
-    let vals: Vec<i64> = vec![1, 4, -5, 0, 10, 8, -2, -4, 0, -5];
+    // let vals: Vec<i64> = vec![1, 4, -5, 0, 10, 8, -2, -4, 0, -5];
+    let vals: Vec<i64> = vec![1, 2, 3, 4, 5, 5, -5, -5, 0, 10];
     // let vals: Vec<i64> = vec![1, 50];
 
     for val in vals
@@ -39,13 +48,13 @@ fn main() {
 
     let (file_path, _) = col_data.create_and_save_to_file();
 
+    let f = File::open(file_path).unwrap();
+    let _ = ColData::read_from_file(f);
 
-    let new_col = ColData::read_from_file(&file_path);
+    // let read_data = new_col.data();
 
-    let read_data = new_col.data();
-
-    println!("Data after read and decoding ");
-    println!("{:?}", read_data);
+    // println!("Data after read and decoding ");
+    // println!("{:?}", read_data);
 
 }
 

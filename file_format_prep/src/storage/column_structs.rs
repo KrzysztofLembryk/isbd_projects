@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::io::{Write};
@@ -276,6 +277,11 @@ impl ColHeader
     pub fn col_name(&self) -> &String {
         &self.col_name
     }
+
+    pub fn get_next_file_path(&self) -> String
+    {
+        format!("{}/{}_{}", DB_DATA_DIR, self.col_name ,self.col_id + 1)
+    }
 }
 
 
@@ -314,7 +320,9 @@ impl ColType for String
 pub struct ColData<T: ColType>
 {
     header: ColHeader,
-    data: Vec<T>
+    data: Vec<T>,
+    n_rows: usize,
+    average: f64,
 }
 
 impl<T: ColType> ColData<T>
@@ -328,7 +336,9 @@ impl<T: ColType> ColData<T>
 
         Ok(ColData {
             header: header,
-            data: Vec::new()
+            data: Vec::new(),
+            n_rows: 0,
+            average: 0.0,
         })
     }
 }
@@ -351,7 +361,6 @@ impl ColData<i64>
         {
             return Err("Data stored will be greater than batch size");
         }
-        self.header.increase_data_size(std::mem::size_of::<i64>() as u32)?;
         self.data.push(val);
         Ok(())
     }
@@ -380,78 +389,183 @@ impl ColData<i64>
         vle_encoded_vec
     }
 
-    pub fn read_from_file(file_path: &str) -> ColData<i64>
+    pub fn read_from_file(mut f: File) -> ColData<i64>
     {
-        // TODO: We should get this as argument probably
-        // let file_path = format!("{}/{}_{}", 
-        //                             DB_DATA_DIR, 
-        //                             self.header.col_name(), 
-        //                             self.header.col_id()
-        // );
-
         let mut buf = [0 as u8; CHUNK_SIZE_BYTES];
-
-        let mut f = File::open(file_path).unwrap();
         let mut bytes_read;
         let mut buf_idx = 0;
 
         bytes_read = f.read(&mut buf).unwrap();
 
-        let header = ColHeader::read_from_buf(&mut buf_idx, bytes_read, &buf).unwrap();
+        let mut header = ColHeader::read_from_buf(&mut buf_idx, bytes_read, &buf).unwrap();
+
+        let mut size_read = bytes_read - buf_idx;
         let mut bytes: Vec<u8> = Vec::new();
         let mut first_value = true;
         let mut result_vec: Vec<i64> = Vec::new();
         let mut min_val: i64 = 0;
+        let mut n_rows: usize = 0;
+        let mut average: f64 = 0.0;
 
+        println!("col data size: {}", header.size_of_data());
+        print!("decoded: ");
         loop 
         {
+            println!("size_read: {size_read}");
             if buf_idx >= bytes_read
             {
-                buf_idx = 0;
-                bytes_read = f.read(&mut buf).unwrap();
+                let is_break = ColData::read_new_data(
+                    &mut buf_idx, 
+                    &mut bytes_read, 
+                    &mut size_read, 
+                    &mut header, 
+                    &mut buf, 
+                    &mut f
+                );
 
-                if bytes_read == 0 {break;}
+                if is_break {break;}
             }
 
             let byte = buf.get(buf_idx).unwrap();
             bytes.push(*byte);
 
-            // if most significant bit is 0 it means that this is last byte
+            // If most significant bit is 0 it means that this is last byte
             // in vle encoded sequence, so we need to decode it into i64
             if byte & 0x80 == 0
             {
-                // only first value might be negative
-                if first_value
+                let decoded_val = ColData::decode_bytes(
+                                &mut first_value, 
+                                &mut bytes, 
+                                &mut min_val);
+
+                result_vec.push(decoded_val);
+                print!("{} ", decoded_val);
+
+                average = ((average * n_rows as f64) + decoded_val as f64) 
+                        / ((n_rows + 1) as f64);
+                n_rows += 1;
+                
+                if n_rows % BATCH_SIZE == 0
                 {
-                    let decoded_val = vle_decode_i(&bytes);
-
-                    bytes.clear();
-                    result_vec.push(decoded_val);
-
-                    min_val = decoded_val;
-                    first_value = false;
-                }
-                else 
-                {
-                    let decoded_val = vle_decode_u(&bytes);
-                    println!("decoded val: {}", decoded_val);
-                    bytes.clear();
-                    result_vec.push(min_val + (decoded_val as i64));
-
+                    // When we start new batch again first value might be negative
+                    first_value = true;
                 }
             }
             buf_idx += 1;
         }
 
+        println!();
+        println!("average: {}", average);
+
         ColData {
             header: header,
-            data: result_vec
+            data: result_vec,
+            n_rows: n_rows,
+            average: average
         }
+    }
+
+    fn decode_bytes(
+        first_value: &mut bool, 
+        bytes: &mut Vec<u8>,
+        min_val: &mut i64,
+    ) -> i64
+    {
+        let mut decoded_val: i64;
+
+        if *first_value
+        {
+            // First value might be negative, and is minimal value in Batch
+            decoded_val = vle_decode_i(bytes);
+
+            bytes.clear();
+            
+            *min_val = decoded_val;
+            *first_value = false;
+        }
+        else 
+        {
+            // We did delta encoding so we need to add min_val to our decoded 
+            // value to get final result
+            decoded_val = vle_decode_u(&bytes) as i64;
+            decoded_val += *min_val;
+
+            bytes.clear();
+        }
+
+        decoded_val
+    }
+
+    fn read_new_data(
+        buf_idx: &mut usize, 
+        bytes_read: &mut usize,
+        size_read: &mut usize,
+        header: &mut ColHeader,
+        buf: &mut [u8; CHUNK_SIZE_BYTES],    
+        f: &mut File
+    ) -> bool
+    {
+        *buf_idx = 0;
+        *bytes_read = f.read(buf).unwrap();
+
+        // Here we just add bytes_read since we are not reading header data now
+        *size_read += *bytes_read;
+
+        if *size_read > header.size_of_data() as usize
+        {
+            panic!("Size of data we read is greater than size of data stored in file's header");
+        }
+
+        if *bytes_read == 0 
+        {
+            if header.is_overflow()
+            {
+                // If overflow, this means that there are more files 
+                // for this column. Here we will open next file, 
+                // create new header and continue reading from buffer
+                *f = ColData::continue_to_next_file(
+                                                    header, 
+                                                    buf_idx, 
+                                                    bytes_read, 
+                                                    buf);
+                // We need to substract buf_idx since first bytes we read from
+                // file are headers bytes, thus nbr of bytes of data we read
+                // is bytes_read - buf_idx 
+                *size_read = *bytes_read - *buf_idx;
+            }
+            else if *size_read != header.size_of_data() as usize
+            {
+                panic!("We ended reading data from file, but amount of data we read is not equal to data size stored in file header");
+            }
+            else 
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn continue_to_next_file(
+        col_h: &mut ColHeader, 
+        buf_idx: &mut usize,
+        bytes_read: &mut usize,
+        buf: &mut [u8; CHUNK_SIZE_BYTES],
+    ) -> File
+    {
+        let mut f = File::open(col_h.get_next_file_path()).unwrap();
+
+        *bytes_read = f.read(buf).unwrap();
+        *buf_idx = 0;
+
+        *col_h = ColHeader::read_from_buf(buf_idx, *bytes_read, buf).unwrap();
+
+        f
     }
 
     pub fn create_and_save_to_file(&mut self) -> (String, File)
     {
         let encoded_vec = self.vle_encode();
+        self.header.increase_data_size(encoded_vec.len() as u32).unwrap();
         let (file_name, mut f) = self.header.save_to_file(DB_DATA_DIR).unwrap();
 
         f.write_all(&encoded_vec).unwrap();

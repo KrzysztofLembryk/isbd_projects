@@ -157,7 +157,7 @@ impl DbManager
         f
     }
 
-    pub fn start_db(&mut self) -> Result<(), io_err>
+    pub fn init_db(&mut self) -> Result<(), io_err>
     {
         // To start db, db metadata file must be present
         self.db_meta = Some(
@@ -257,4 +257,26 @@ impl DbManager
         }
     }
     // pub fn save_data_to_column(col_name: &String, )
+
+    pub fn run(&mut self, column_names: &Vec<String>) -> Result<(), &str>
+    {
+        let meta = self.db_meta.as_ref().unwrap();
+
+        if column_names.iter().any(|name| !meta.col_names_idxs().contains_key(name))
+        {
+            return Err("passed column name is not present in database");
+        }
+
+        for name in column_names
+        {
+            let file_path = meta.col_files_paths().get(name).unwrap().first().unwrap();
+
+            let f = File::open(file_path).unwrap();
+
+            let col_data = ColData::read_from_file(f);
+
+        }
+
+        Ok(())
+    }
 }
