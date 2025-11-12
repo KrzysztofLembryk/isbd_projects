@@ -1,4 +1,5 @@
-use crate::storage::column_structs::{ColHeader, ColData};
+use crate::storage::col_data::ColData;
+use crate::storage::col_header::ColHeader;
 use crate::storage::metadata_structs::DbMetadata;
 use crate::constants::{METADATA_FILE_PATH, DB_DATA_DIR, AllowedColTypes, CHUNK_SIZE_BYTES};
 use crate::csv_reader;

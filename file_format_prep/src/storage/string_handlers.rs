@@ -1,5 +1,7 @@
 use std::fs::File;
 use std::io::{Error as io_err, Write};
+use regex::Regex;
+
 use crate::constants::{MAX_COL_NAME_LEN, MAX_DATA_STR_LEN};
 use crate::errors::io_other_err_wrapper;
 
@@ -88,4 +90,25 @@ pub fn read_string_from_buf(
     }
 
     Ok(eos_present)
+}
+
+
+pub fn check_col_name_correctness(col_name: &String) -> Result<(), io_err>
+{
+    if col_name.len() > 255
+    {
+        return Err(io_other_err_wrapper("ColHeader - column name exceeds 255 characters"));
+    }
+
+    if !col_name.is_ascii()
+    {
+        return Err(io_other_err_wrapper(&format!("ColHeader - column: '{}' is not ASCII", &col_name)));
+    }
+    
+    let re = Regex::new(r"^[a-zA-Z][a-zA-Z0-9_]*$").unwrap();
+
+    if !re.is_match(&col_name) {
+        return Err(io_other_err_wrapper("Column names must match regex: ^[a-zA-Z][a-zA-Z0-9_]*$"));
+    }
+    Ok(())
 }

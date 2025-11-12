@@ -10,7 +10,8 @@ use std::vec;
 // use file_format_prep::constants::METADATA_FILE_PATH;
 // use file_format_prep::storage::column_structs::{ColHeader};
 use file_format_prep::db_manager::DbManager;
-use file_format_prep::storage::column_structs::{ColData, ColHeader};
+use file_format_prep::storage::col_data::ColData;
+use file_format_prep::storage::col_header::ColHeader;
 use file_format_prep::constants::AllowedColTypes;
 
 fn main() 
