@@ -1,5 +1,12 @@
 # isbd_projects
 
+All projects will be done in RUST.
+
+## II project - preparation of file format
+- solution is in file_format_prep directory, it has it's own README
+
+# Useful links
+
 ## How to get started impl db
 - https://stackoverflow.com/questions/13177882/implementing-a-database-how-to-get-started
 
