@@ -259,8 +259,10 @@ impl<T: ColType> ColData<T>
             println!("first time saving");
             self.first_time_saving = false;
 
+            println!("flag set to false");
             // we get file handle to created file, to which we will append data
             (_, f) = self.header.save_to_file(DB_DATA_DIR).unwrap();
+            println!("after save to file");
         }
         else 
         {
@@ -463,8 +465,6 @@ impl ColData<i64>
 
 impl ColData<String>
 {
-    // Decoding using zstd: https://stackoverflow.com/questions/77304382/how-to-decode-and-read-a-zstd-file-in-rust
-
     pub fn read_from_file(mut f: File) -> ColData<String>
     {
         // TODO: ADD PROPER ERROR HANDLIIIING with my-defined Errors
@@ -589,7 +589,9 @@ impl ColData<String>
         println!("Saving strings: {:?}", strings);
         println!();
         let mut f: File = self._get_file_handle();
+        println!("file handle got");
         let strs_encoded = ColData::_zstd_encode(strings);
+        println!("data encoded");
 
         f = self._do_the_save(&strs_encoded, f);
 

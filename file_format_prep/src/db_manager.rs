@@ -13,8 +13,8 @@ use std::io::{Seek, SeekFrom};
 pub struct DbManager
 {
     db_meta: Option<DbMetadata>,
-    str_cols_map: HashMap<String, ColData<String>>,
-    int_cols_map: HashMap<String, ColData<i64>>,
+    str_storage_map: HashMap<String, ColData<String>>,
+    int_storage_map: HashMap<String, ColData<i64>>,
     metadata_dir_path: String,
     col_dir_path: String,
     row_count: usize, 
@@ -27,8 +27,8 @@ impl DbManager
     {
         DbManager{
             db_meta: None,
-            str_cols_map: HashMap::new(),
-            int_cols_map: HashMap::new(),
+            str_storage_map: HashMap::new(),
+            int_storage_map: HashMap::new(),
             metadata_dir_path: String::from(METADATA_FILE_PATH),
             col_dir_path: String::from(cols_dir_path),
             row_count: 0,
@@ -62,60 +62,28 @@ impl DbManager
     /// !!!!!!!! <br> 
     /// !!!!!!!! NOT STREAMING, so probably huge csv files will give error <br>
     /// !!!!!!!! 
-    pub fn init_from_csv(&mut self, csv_path: &str, delim: u8) -> Result<(), String>
+    pub fn init_from_csv(
+        &mut self, 
+        csv_path: &str, 
+        delim: u8
+    ) -> Result<(), String>
     {
-        if delim != b',' && delim != b'\t'
-        {
-            return Err(format!("We support either csv or tsv"));
-        }
-
-        let (types, names, col_data) = csv_reader::read_csv(csv_path, delim);
-
-        let metadata = match DbMetadata::new(types, names)
-        {
-            Ok(m) => m,
-            Err(e) =>  return Err(format!("init_from_csv - metadata::new - {}", e))
-        };
-
-        match metadata.save_to_file(METADATA_FILE_PATH)
-        {
-            Ok(_) => (),
-            Err(e) => return Err(format!("init_from_csv - metdata::save_to_file - {}", e))
-        }
-
+        let (metadata, col_data) = 
+                DbManager::_get_data_and_metadata_from_csv(csv_path, delim)?;
         let col_names = metadata.col_names();
         let col_types = metadata.col_types();
         let n_cols = col_names.len();
 
-        // In metadata we have all information about columns so we can populate
-        // hash map that will store column_name : ColData objects which handle
-        // deserialization and serialization of data
-        for idx in 0..n_cols
-        {
-            let col_name = col_names.get(idx).unwrap().clone();
-            let col_type = AllowedColTypes::from_u8(*col_types.get(idx).unwrap()).unwrap();
-            let col_h = ColHeader::new_empty(col_type, col_name.clone()).unwrap();
-            if col_type == AllowedColTypes::IntType
-            {
-                let col_d: ColData<i64> = ColData::new(col_h).unwrap();
-                self.int_cols_map.insert(col_name, col_d);
-
-            }
-            else 
-            {
-                println!("String col not impl yet");
-            }
-        }
+        self._init_storage_maps(n_cols, col_names, col_types);
 
         for (idx, col_data_vec) in col_data.iter().enumerate()
         {
-            
             let c_type = AllowedColTypes::from_u8(*col_types.get(idx).unwrap())?;
             let c_name = col_names.get(idx).unwrap().clone();
 
             if c_type == AllowedColTypes::IntType
             {
-                let col_data_storage = self.int_cols_map.get_mut(&c_name).unwrap();
+                let col_data_storage = self.int_storage_map.get_mut(&c_name).unwrap();
 
                 // Parse strings to i64
                 let mut int_values: Vec<i64> = Vec::new();
@@ -127,12 +95,20 @@ impl DbManager
                 }
                 
                 // Process data in BATCH_SIZE chunks 
-                for chunk in int_values.chunks(BATCH_SIZE) {
+                for chunk in int_values.chunks(BATCH_SIZE) 
+                {
                     col_data_storage.save_to_file(chunk);                  
                 }
-                // FOR TESTING WE SAVE ONLY ONE FILE
             }
+            else 
+            {
+                let col_data_storage = self.str_storage_map.get_mut(&c_name).unwrap();
 
+                for chunk in col_data_vec.chunks(BATCH_SIZE)
+                {
+                    col_data_storage.save_to_file(chunk);
+                }
+            }
         }
 
         match metadata.save_to_file(METADATA_FILE_PATH)
@@ -144,7 +120,6 @@ impl DbManager
 
         Ok(())
     }
-
 
     /// Function reads whole column data and calculates either mean of its 
     /// values or counts how many of each character there is 
@@ -175,14 +150,20 @@ impl DbManager
             let col_data = ColData::<i64>::read_from_file(f);
             n_rows = col_data.n_rows();
 
-            self.int_cols_map.insert(
+            self.int_storage_map.insert(
                 String::from(col_name),  
                 col_data
             );
         }
         else 
         {
-            println!("String not implemented yet");
+            let col_data = ColData::<String>::read_from_file(f);
+            n_rows = col_data.n_rows();
+
+            self.str_storage_map.insert(
+                String::from(col_name),  
+                col_data
+            );
         }
 
         Ok(n_rows)
@@ -217,17 +198,81 @@ impl DbManager
             }
         }
 
-        for (name, data) in &self.int_cols_map
+        for (name, data) in &self.int_storage_map
         {
             println!("{}, avg: {}", name, data.result());
         }
 
-        for (name, data) in &self.str_cols_map
+        for (name, data) in &self.str_storage_map
         {
 
             println!("{}, count: {}", name, data.result());
         }
 
         Ok(())
+    }
+
+    // ################# PRIVATE FUNCTIONS ######################
+
+    fn _init_storage_maps(
+        &mut self, 
+        n_cols: usize, 
+        col_names: &Vec<String>,
+        col_types: &Vec<u8>  
+    )
+    {
+        // In metadata we have all information about columns so we can populate
+        // hash map that will store column_name : ColData objects which handle
+        // deserialization and serialization of data
+        for idx in 0..n_cols
+        {
+            let col_name = col_names.get(idx).unwrap().clone();
+            let col_type = AllowedColTypes
+                        ::from_u8(*col_types.get(idx).unwrap())
+                        .unwrap();
+            let col_h = ColHeader
+                        ::new_empty(col_type, col_name.clone())
+                        .unwrap();
+
+            if col_type == AllowedColTypes::IntType
+            {
+                let col_d: ColData<i64> = ColData::new(col_h).unwrap();
+                self.int_storage_map.insert(col_name, col_d);
+
+            }
+            else 
+            {
+                let col_d: ColData<String> = ColData::new(col_h).unwrap();
+                self.str_storage_map.insert(col_name, col_d);
+            }
+        }
+    }
+
+
+    fn _get_data_and_metadata_from_csv(
+        csv_path: &str, 
+        delim: u8
+    ) -> Result<(DbMetadata, Vec<Vec<String>>), String>
+    {
+        if delim != b',' && delim != b'\t'
+        {
+            return Err(format!("We support either csv or tsv"));
+        }
+
+        let (types, names, col_data) = csv_reader::read_csv(csv_path, delim);
+
+        let metadata = match DbMetadata::new(types, names)
+        {
+            Ok(m) => m,
+            Err(e) =>  return Err(format!("init_from_csv - metadata::new - {}", e))
+        };
+
+        match metadata.save_to_file(METADATA_FILE_PATH)
+        {
+            Ok(_) => (),
+            Err(e) => return Err(format!("init_from_csv - metdata::save_to_file - {}", e))
+        }
+
+        Ok((metadata, col_data))
     }
 }

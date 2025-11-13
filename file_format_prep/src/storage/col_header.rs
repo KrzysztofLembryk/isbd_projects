@@ -1,4 +1,4 @@
-use crate::constants::{AllowedColTypes, CHUNK_SIZE_BYTES, DB_DATA_DIR, MAGIC_WORD, MAX_FILE_SIZE};
+use crate::constants::{AllowedColTypes, DB_DATA_DIR, MAGIC_WORD, MAX_FILE_SIZE};
 use crate::storage::string_handlers::{StrLenCheckType, read_string_from_buf, check_col_name_correctness};
 use crate::errors::io_other_err_wrapper;
 
@@ -108,12 +108,19 @@ impl ColHeader
             + mem::size_of_val(&self.size_of_data)
             + self.col_name.len() + 1;
 
-        // In one file we can have only MAX_FILE_SIZE bytes with HEADERS bytes
-        if MAX_FILE_SIZE - (header_size as u32) < self.size_of_data
+        match MAX_FILE_SIZE.checked_sub(header_size as u32) 
         {
-            return Err(io_other_err_wrapper("ColHeader - save_to_file - size_of_data + header data size exceeds MAX_FILE_SIZE"));
-        }
-
+            Some(val) => {
+                if val < self.size_of_data
+                {
+                    return Err(io_other_err_wrapper("ColHeader - save_to_file - size_of_data + header data size exceeds MAX_FILE_SIZE"));
+                }
+            },
+            None => {
+                return Err(io_other_err_wrapper("ColHeader::save_to_file: MAX_FILE_SIZE - header_size is negative"));
+            }
+        };
+        
         f.write(&self.magic_word.to_be_bytes())?;
         f.write(&self.col_id.to_be_bytes())?;
         f.write(&AllowedColTypes::to_u8(&self.col_type).to_be_bytes())?;
@@ -212,37 +219,32 @@ impl ColHeader
         // flag in current file and also in METADATA we need to add new 
         // file_path for this column
 
-        // For now we want to store WHOLE chunks in our files, so if one whole
-        // chunk does not fit, we need to create a new file
-        println!("trying to increase data size in header by: '{}'", new_data_len);
         let new_data_size = match self.size_of_data.checked_add(new_data_len)
         {
             None => {
-                println!("checked add overflow");
                 self.is_overflow = true;
                 let diff = MAX_FILE_SIZE - self.size_of_data;
                 self.size_of_data = MAX_FILE_SIZE;
+
                 return Err(diff as usize);
             },
             Some(new_size) => {
                 if new_size <= MAX_FILE_SIZE 
                 {
-                    println!("we have enough space for new data");
                     new_size
                 }
                 else 
                 {
-                    println!("we !DON'T! have enough space for new data");
                     self.is_overflow = true;
                     let diff = MAX_FILE_SIZE - self.size_of_data;
                     self.size_of_data = MAX_FILE_SIZE;
+
                     return Err(diff as usize);
                 }
-                }
+            }
         };
 
         self.size_of_data = new_data_size;
-        println!("New data size: {}", self.size_of_data);
 
         Ok(())
     }

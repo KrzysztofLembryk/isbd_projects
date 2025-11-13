@@ -21,13 +21,13 @@ fn main()
 
     let mut db_manager = DbManager::new(DB_DATA_DIR);
 
-    // match db_manager.init_from_csv(tsv_file_path, delim)
-    // {
-    //     Ok(_) => (),
-    //     Err(e) => panic!("{e}")
-    // }
+    match db_manager.init_from_csv(tsv_file_path, delim)
+    {
+        Ok(_) => (),
+        Err(e) => panic!("{e}")
+    }
 
-    db_manager.init_db().unwrap();
-    db_manager.read_col_data("int1").unwrap();
+    // db_manager.init_db().unwrap();
+    // db_manager.read_all_col_data().unwrap();
 
 }
