@@ -5,6 +5,7 @@ pub const MAGIC_WORD: u32 = 0xF1FAA;
 pub const METADATA_FILE_PATH: &str = "./db_metadata";
 pub const DB_DATA_DIR: &str = "./db_data";
 
+pub const ZSTD_ENCODE_LEVEL: i32 = 3;
 pub const NULL_TERMINATOR_SIZE: usize = 1;
 pub const COLUMN_HEADER_SIZE: usize = 12;
 

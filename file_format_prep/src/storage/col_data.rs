@@ -1,16 +1,36 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::io::{Write};
+use zstd;
 
 use std::io::Error as io_err;
-use crate::constants::{AllowedColTypes, BATCH_SIZE, CHUNK_SIZE_BYTES, DB_DATA_DIR};
+use crate::constants::{AllowedColTypes, BATCH_SIZE, CHUNK_SIZE_BYTES, DB_DATA_DIR, ZSTD_ENCODE_LEVEL};
 use crate::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle_decode_i, vle_decode_u};
+// TODO: metadata should be updated when we save to file
 use crate::storage::metadata_structs::DbMetadata;
 use crate::storage::col_header::ColHeader;
 
 #[cfg(test)]
 #[path = "../tests/test_column_structs.rs"]
 mod test_column_structs;
+
+enum ResType
+{
+    StrColRes(usize),
+    IntColRes(f64)
+}
+
+impl ResType
+{
+    pub fn get_res_type<T: ColType>() -> ResType
+    {
+        match T::col_type()
+        {
+            AllowedColTypes::IntType => ResType::IntColRes(0.0),
+            AllowedColTypes::StrType => ResType::StrColRes(0)
+        }
+    }
+}
 
 pub trait ColType 
 {
@@ -36,7 +56,7 @@ pub struct ColData<T: ColType>
     header: ColHeader,
     data: Vec<T>,
     n_rows: usize,
-    result: f64,
+    result: ResType,
     file_handle: Option<File>,
     first_time_saving: bool,
 }
@@ -54,7 +74,7 @@ impl<T: ColType> ColData<T>
             header: header,
             data: Vec::new(),
             n_rows: 0,
-            result: 0.0,
+            result: ResType::get_res_type::<T>(),
             file_handle: None,
             first_time_saving: true
         })
@@ -279,7 +299,9 @@ impl ColData<i64>
 
         let mut header = ColHeader::read_from_buf(&mut buf_idx, bytes_read, &buf).unwrap();
 
-        let mut size_read = bytes_read - buf_idx;
+        // Below var checks how many bytes of DATA we read, not metadata
+        // thus we substract buf_idx since it now stores metadata count
+        let mut size_data_bytes_read = bytes_read - buf_idx;
         let mut bytes: Vec<u8> = Vec::new();
         let mut first_value = true;
         let mut result_vec: Vec<i64> = Vec::new();
@@ -296,7 +318,7 @@ impl ColData<i64>
                 let is_break = ColData::<i64>::_read_new_data(
                     &mut buf_idx, 
                     &mut bytes_read, 
-                    &mut size_read, 
+                    &mut size_data_bytes_read, 
                     &mut header, 
                     &mut buf, 
                     &mut f
@@ -341,7 +363,7 @@ impl ColData<i64>
             header: header,
             data: result_vec,
             n_rows: n_rows,
-            result: average,
+            result: ResType::IntColRes(average),
             file_handle: None, // maybe better to store f?
             first_time_saving: false
         }
@@ -373,7 +395,11 @@ impl ColData<i64>
 
     pub fn result(&self) -> f64
     {
-        self.result
+        match self.result
+        {
+            ResType::IntColRes(val) => val,
+            _ => panic!("ColData<i64> has not IntColRes as result type")
+        }
     }
     // ########################################################################
     // ############################ PRIVATE API ###############################
@@ -435,13 +461,197 @@ impl ColData<i64>
     }
 }
 
-
 impl ColData<String>
 {
+    // Decoding using zstd: https://stackoverflow.com/questions/77304382/how-to-decode-and-read-a-zstd-file-in-rust
 
-    pub fn result(&self) -> f64
+    pub fn read_from_file(mut f: File) -> ColData<String>
     {
-        self.result
+        // TODO: ADD PROPER ERROR HANDLIIIING with my-defined Errors
+        let mut buf = [0 as u8; CHUNK_SIZE_BYTES];
+        let mut bytes_read;
+        let mut buf_idx = 0;
+
+        bytes_read = f.read(&mut buf).unwrap();
+
+        let mut header = ColHeader::read_from_buf(
+                                            &mut buf_idx, 
+                                            bytes_read, 
+                                            &buf
+                                        ).unwrap();
+
+        // Below var checks how many bytes of DATA we read, not metadata
+        // thus we substract buf_idx since it now stores metadata count
+        let mut size_data_bytes_read = bytes_read - buf_idx;
+        let mut bytes: Vec<u8> = Vec::new();
+
+        let result_vec: Vec<String> = Vec::new();
+        let mut ascii_count: usize = 0;
+        let mut n_rows: usize = 0;
+
+        #[derive(PartialEq)]
+        enum ReadStage 
+        {
+            SizeStage,
+            DataStage
+        }
+
+        let mut n_bytes: u32 = 0;
+        let mut curr_stage = ReadStage::SizeStage;
+        let mut zstd_frame_size: u32 = 0;
+        let nbr_of_size_bytes: u32 = std::mem::size_of::<u32>() as u32;
+
+        println!("col data size: {}", header.size_of_data());
+        print!("decoded: ");
+        loop 
+        {
+            if buf_idx >= bytes_read
+            {
+                let is_break = ColData::<String>::_read_new_data(
+                    &mut buf_idx, 
+                    &mut bytes_read, 
+                    &mut size_data_bytes_read, 
+                    &mut header, 
+                    &mut buf, 
+                    &mut f
+                );
+
+                if is_break {break;}
+            }
+
+            let byte = buf.get(buf_idx).unwrap();
+            bytes.push(*byte);
+            n_bytes += 1;
+
+            if curr_stage == ReadStage::SizeStage
+            {
+                if n_bytes == nbr_of_size_bytes
+                {
+                    if bytes.len() != 4
+                    {
+                        panic!("sth went wrong, in bytes we don't have 4 bytes, but {}", bytes.len());
+                    }
+
+                    // In bytes we should have only 4 bytes 
+                    zstd_frame_size = u32::from_be_bytes(bytes[..4].try_into().unwrap());
+                    n_bytes = 0;
+                    curr_stage = ReadStage::DataStage;
+
+                    bytes.clear();
+                }
+            }
+            else 
+            {
+                // We can decode strings only when we have read exactly 
+                // zstd_frame_size bytes
+                if n_bytes == zstd_frame_size
+                {
+                    let decoded_strings = ColData::<String>::_zstd_decode(&bytes);
+
+                    // Each decoded string is a value for separate row
+                    n_rows += decoded_strings.len();
+                    ascii_count += decoded_strings
+                                    .iter()
+                                    .fold(0, |mut acc, s| {
+                                        acc += s.len(); 
+                                        acc
+                                    });
+
+                    // After reading one full zstd frame, we again need to read
+                    // frame size, so we switch stage
+                    n_bytes = 0;
+                    curr_stage = ReadStage::SizeStage;
+                    bytes.clear();
+                }
+            }
+
+            buf_idx += 1;
+        }
+
+        ColData {
+            header: header,
+            data: result_vec,
+            n_rows: n_rows,
+            result: ResType::StrColRes(ascii_count),
+            file_handle: None, // maybe better to store f?
+            first_time_saving: false
+        }
+    }
+
+    pub fn save_to_file(&mut self, strings: &[String])
+    {
+        // TODO: better error handling, at least any
+        if strings.len() > BATCH_SIZE
+        {
+            panic!("ColData<String> - save_to_file - vector of data has greater size than allowed BATCH_SIZE");
+        }
+
+        println!("Saving strings: {:?}", strings);
+        println!();
+        let mut f: File = self._get_file_handle();
+        let strs_encoded = ColData::_zstd_encode(strings);
+
+        f = self._do_the_save(&strs_encoded, f);
+
+        self.file_handle = Some(f);
+    }
+
+    pub fn result(&self) -> usize
+    {
+        match self.result
+        {
+            ResType::StrColRes(val) => val,
+            _ => panic!("ColData<String> has not StrColRes as result type")
+        }
+    }
+
+    fn _zstd_decode(bytes: &[u8]) -> Vec<String>
+    {
+        let decoded = zstd::decode_all(bytes).unwrap();
+        let combined = String::from_utf8(decoded).unwrap();
+        let str_vec: Vec<String> = combined
+                    .split('\0')
+                    .map(|s| s.to_string())
+                    .collect();
+
+        // When we encode we make sure that characters are ASCII, but someone
+        // might give us malicious file/bytes and there might be non-ASCII 
+        // characetrs there, so after decoding we need to check that
+        if str_vec.iter().any(|s| !s.is_ascii())
+        {
+            panic!("After decoding we got strings with non-ASCII characters");
+        }
+
+        str_vec
+    }
+
+    fn _zstd_encode(strings: &[String]) -> Vec<u8>
+    {
+        if strings.iter().any(|s| !s.is_ascii())
+        {
+            panic!("_zstd_encode - there are non-ASCII characters in data");
+        }
+
+        // We add separator so that we can easily read strings after 
+        // decompression
+        let concat_strs = strings.join("\0");
+        let compressed = zstd::encode_all(
+            concat_strs.as_bytes(), 
+            ZSTD_ENCODE_LEVEL).expect("Compressing strings failed");
+        
+        // We save and read CHUNK_SIZE bytes, thus we may not save whole 
+        // compressed data in one go and in one file, or we may not read whole
+        // zstd encoded frame, thus we need to store compressed data size + data
+        // cause otherwise we will not be able to decompress correctly our data
+        let size: u32 = compressed.len() as u32;
+
+        // So that we do only one malloc
+        let mut result = Vec::with_capacity(std::mem::size_of::<u32>() + compressed.len());
+
+        result.extend_from_slice(&size.to_be_bytes());
+        result.extend_from_slice(&compressed);
+
+        result
     }
 }
 //##############################################################################
