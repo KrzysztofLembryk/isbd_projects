@@ -3,7 +3,7 @@ use std::io::{Error as io_err, Write};
 use regex::Regex;
 
 use crate::constants::{MAX_COL_NAME_LEN, MAX_DATA_STR_LEN};
-use crate::errors::io_other_err_wrapper;
+use crate::errors::{DbError};
 
 #[derive(PartialEq)]
 pub enum StrLenCheckType
@@ -16,17 +16,22 @@ pub enum StrLenCheckType
 pub fn save_string_to_file_with_null_char(
     s: &String, 
     f: &mut File
-) -> Result<(), io_err>
+) -> Result<(), DbError>
 {
     if s.len() > MAX_COL_NAME_LEN
     {
-        return Err(io_other_err_wrapper(&format!("Column :'{}' has length greater than max allowed len: {}", s, MAX_COL_NAME_LEN)));
+        return Err(DbError::SizeExceeded{
+            msg: format!("save_string_to_file_with_null_char:"),  
+            max: MAX_COL_NAME_LEN
+        }
+        );
     }
     let null_terminator = [b'\0'];
 
     if !s.is_ascii()
     {
-        return Err(io_other_err_wrapper(&format!("Column: '{}' is not ASCII", s)));
+        return Err(DbError::UnsupportedType(
+            format!("save_string_to_file_with_null_char: '{}' is not ASCII", s)));
     }
 
     f.write(s.as_bytes())?;
@@ -41,7 +46,7 @@ pub fn read_string_from_buf(
     buf: &[u8],
     res_str: &mut String,
     len_check_type: StrLenCheckType
-) -> Result<bool, io_err>
+) -> Result<bool, DbError>
 {
     // -- Function reads from buffer characters and appends them to res_str up
     // until encountering NULL Terminator or exceeding number of characters 
@@ -74,7 +79,7 @@ pub fn read_string_from_buf(
         // one thus we need to check that again when reading.
         if !c.is_ascii()
         {
-            return Err(io_other_err_wrapper("DbMetadata - read_metadata - we've read not an ASCII character"));
+            return Err(DbError::Other("read_string_from_buf: we've read not an ASCII character".to_string()));
         }
 
         res_str.push(c as char);
@@ -82,12 +87,19 @@ pub fn read_string_from_buf(
         if len_check_type == StrLenCheckType::ColNameLenCheck 
             && res_str.len() > MAX_COL_NAME_LEN
         {
-            return Err(io_other_err_wrapper(&format!("read_string_from_buf - column name exceeds {} characters, name: {}", MAX_COL_NAME_LEN, res_str)));
+            return Err(DbError::SizeExceeded{
+                msg: format!("read_string_from_buf - column name: '{}'", res_str),
+                max: MAX_COL_NAME_LEN
+            }
+            );
         }
         else if len_check_type == StrLenCheckType::DataLenCheck
             && res_str.len() > MAX_DATA_STR_LEN
         {
-            return Err(io_other_err_wrapper(&format!("read_string_from_buf - str data exceeds MAX allowed size: {}", MAX_DATA_STR_LEN)));
+            return Err(DbError::SizeExceeded{
+                msg: format!("read_string_from_buf: res_str"), 
+                max: MAX_DATA_STR_LEN
+            });
         }
 
         *curr_buf_idx += 1;
@@ -97,22 +109,32 @@ pub fn read_string_from_buf(
 }
 
 
-pub fn check_col_name_correctness(col_name: &String) -> Result<(), io_err>
+pub fn check_col_name_correctness(col_name: &String) -> Result<(), DbError>
 {
     if col_name.len() > MAX_COL_NAME_LEN
     {
-        return Err(io_other_err_wrapper("ColHeader - column name exceeds 255 characters"));
+        return Err(DbError::InvalidColumnName {
+            msg: format!("Column name exceeds maximum length {}", MAX_COL_NAME_LEN),
+            name: col_name.clone()
+        });
     }
 
     if !col_name.is_ascii()
     {
-        return Err(io_other_err_wrapper(&format!("ColHeader - column: '{}' is not ASCII", &col_name)));
+        return Err(DbError::InvalidColumnName {
+            msg: "Column name contains non-ASCII characters".to_string(),
+            name: col_name.clone()
+        });
     }
     
-    let re = Regex::new(r"^[a-zA-Z][a-zA-Z0-9_]*$").unwrap();
+    let re = Regex::new(r"^[a-zA-Z][a-zA-Z0-9_]*$")
+        .map_err(|e| DbError::Other(format!("Failed to compile regex: {}", e)))?;
 
     if !re.is_match(&col_name) {
-        return Err(io_other_err_wrapper("Column names must match regex: ^[a-zA-Z][a-zA-Z0-9_]*$"));
+        return Err(DbError::InvalidColumnName {
+            msg: "Column name must start with a letter and contain only letters, numbers, and underscores".to_string(),
+            name: col_name.clone()
+        });
     }
     Ok(())
 }

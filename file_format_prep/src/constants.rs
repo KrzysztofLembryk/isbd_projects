@@ -11,6 +11,7 @@ pub const COLUMN_HEADER_METADATA_SIZE: usize = 12;
 
 // pub const MAX_COL_NAME_LEN: usize = 254; // without null terminator
 pub const MAX_COL_NAME_LEN: usize = 50; 
+pub const MAX_COL_COUNT: usize = u16::MAX as usize;
 
 // This needs to be of such size, so that BATCH_SIZE * MAX_DATA_STR_LEN
 // can be stored in-memory
@@ -26,6 +27,7 @@ pub const CHUNK_SIZE_BYTES: usize = 50;
 // number of rows we want to read in one go
 pub const BATCH_SIZE: usize = 10; 
 
+use crate::errors::DbError;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum AllowedColTypes {
@@ -34,7 +36,7 @@ pub enum AllowedColTypes {
 }
 impl AllowedColTypes
 {
-    pub fn from_u8(x: u8) -> Result<AllowedColTypes, String>
+    pub fn from_u8(x: u8) -> Result<AllowedColTypes, DbError>
     {
         if x == 0
         {
@@ -46,7 +48,7 @@ impl AllowedColTypes
         }
         else 
         {
-            return Err(String::from("AllowedColTypese - from_u8 - got neither 0 nor 1"));
+            return Err(DbError::ColumnTypeMismatch("AllowedColTypese::from_u8 - got neither 0 nor 1".to_string()));
         }
     }
 

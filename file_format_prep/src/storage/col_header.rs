@@ -1,8 +1,8 @@
 use crate::constants::{AllowedColTypes, DB_DATA_DIR, MAGIC_WORD, MAX_FILE_SIZE};
 use crate::storage::string_handlers::{StrLenCheckType, read_string_from_buf, check_col_name_correctness};
-use crate::errors::io_other_err_wrapper;
+use crate::errors::{DbError};
 
-use std::io::{Error as io_err, Write};
+use std::io::{Write};
 use std::fs::File;
 use std::io::{Seek, SeekFrom};
 use std::mem;
@@ -33,7 +33,7 @@ impl ColHeader
         is_overflow: bool,
         size_of_data: u32,
         col_name: String
-    ) -> Result<ColHeader, io_err>
+    ) -> Result<ColHeader, DbError>
     {
         check_col_name_correctness(&col_name)?;
 
@@ -49,7 +49,7 @@ impl ColHeader
     pub fn new_empty(
         col_type: AllowedColTypes, 
         col_name: String
-    ) -> Result<ColHeader, io_err>
+    ) -> Result<ColHeader, DbError>
     {
         let col_id = 0;
         let is_overflow = false;
@@ -61,7 +61,7 @@ impl ColHeader
     /// Function creates next header in sequence. <br>
     /// So it increases col_id, sets overflow to false, size_of_data to 0
     /// and returns new ColHeader object
-    pub fn create_next(&self) -> Result<ColHeader, io_err>
+    pub fn create_next(&self) -> Result<ColHeader, DbError>
     {
         let is_overflow = false;
         let size_of_data = 0;
@@ -79,11 +79,16 @@ impl ColHeader
     ///       already exists, this function should be invoked only once when 
     ///       creating column file for the first time
     /// - We do not encode column header data
-    pub fn save_to_file(&self, dir_path: &str) -> Result<(String, File), io_err>
+    pub fn save_to_file(
+        &self, 
+        dir_path: &str
+    ) -> Result<(String, File), DbError>
     {
         if dir_path.len() == 0
         {
-            return Err(io_other_err_wrapper("ColHeader - save_to_file - path len == 0"));
+            return Err(DbError::Other(
+                "ColHeader::save_to_file - directory path is empty".to_string()
+            ));
         }
 
         let last_path_char = dir_path.as_bytes()[dir_path.len() - 1];
@@ -113,11 +118,17 @@ impl ColHeader
             Some(val) => {
                 if val < self.size_of_data
                 {
-                    return Err(io_other_err_wrapper("ColHeader - save_to_file - size_of_data + header data size exceeds MAX_FILE_SIZE"));
+                    return Err(DbError::SizeExceeded {
+                        msg: "ColHeader::save_to_file - size_of_data + header size exceeds MAX_FILE_SIZE".to_string(),
+                        max: MAX_FILE_SIZE as usize
+                    });
                 }
             },
             None => {
-                return Err(io_other_err_wrapper("ColHeader::save_to_file: MAX_FILE_SIZE - header_size is negative"));
+                return Err(DbError::SizeExceeded {
+                    msg: "ColHeader::save_to_file - header size exceeds MAX_FILE_SIZE".to_string(),
+                    max: MAX_FILE_SIZE as usize
+                });
             }
         };
         
@@ -125,7 +136,11 @@ impl ColHeader
         f.write(&self.col_id.to_be_bytes())?;
         f.write(&AllowedColTypes::to_u8(&self.col_type).to_be_bytes())?;
 
-        let is_overflow: u8 = self.is_overflow.try_into().unwrap();
+        let is_overflow: u8 = self.is_overflow
+            .try_into()
+            .map_err(|_| DbError::Other(
+                "ColHeader::save_to_file - failed to convert bool to u8".to_string()
+            ))?;
 
         f.write(&is_overflow.to_be_bytes())?;
         f.write(&self.size_of_data.to_be_bytes())?;
@@ -144,34 +159,44 @@ impl ColHeader
         curr_buf_idx: &mut usize,
         bytes_read: usize,
         buf: &[u8],
-    ) -> Result<ColHeader, io_err>
+    ) -> Result<ColHeader, DbError>
     {
         // TODO: add better checking if we haave enough bytes to read
         if (bytes_read - *curr_buf_idx) < COL_HEADER_MIN_SIZE
         {
-            return Err(io_other_err_wrapper(&format!("To read column header we need to have buffer size at least: {}", COL_HEADER_MIN_SIZE)));
+            return Err(DbError::SizeMismatch {
+                msg: "ColHeader::read_from_buf - insufficient bytes to read header".to_string(),
+                size_1: bytes_read - *curr_buf_idx,
+                size_2: COL_HEADER_MIN_SIZE
+            });
         }
 
         // TODO: add dynamic buff idx calculations based on variables lengths
         let magic_word = u32::from_be_bytes(
                     buf[..4]
                     .try_into()
-                    .expect("ColHeader - read_from_buf - magic word from buff transformation error"));
+                    .map_err(|_| DbError::Other(
+                        "ColHeader::read_from_buf - failed to read magic word (expected 4 bytes)".to_string()
+                    ))?);
 
         if magic_word != MAGIC_WORD
         {
-            return Err(io_other_err_wrapper("ColHeader - read_from_buf - magic word is incorrect"));
+            return Err(DbError::Other(
+                format!("ColHeader::read_from_buf - invalid magic word: expected 0x{:X}, got 0x{:X}", 
+                    MAGIC_WORD, magic_word)
+            ));
         }
 
         let col_id = u16::from_be_bytes(
                             buf[4..6]
                             .try_into()
-                            .unwrap());
-        let col_type = match AllowedColTypes::from_u8(buf[6])
-                        {
-                            Ok(v) => v,
-                            Err(e) => return Err(io_other_err_wrapper(&e))
-                        };
+                            .map_err(|_| DbError::Other(
+                                "ColHeader::read_from_buf - failed to read col_id (expected 2 bytes)".to_string()
+                            ))?);
+        let col_type = AllowedColTypes::from_u8(buf[6])
+                            .map_err(|e| DbError::UnsupportedType(
+                                format!("ColHeader::read_from_buf - {}", e)
+                            ))?;
 
         let is_overflow: bool = buf[7] == 1;
 
@@ -179,7 +204,9 @@ impl ColHeader
         let size_of_data = u32::from_be_bytes(
                     buf[8..12]
                     .try_into()
-                    .expect("ColHeader - read_from_buf - size_of_data transformation error"));
+                    .map_err(|_| DbError::Other(
+                        "ColHeader::read_from_buf - failed to read size_of_data (expected 4 bytes)".to_string()
+                    ))?);
 
         *curr_buf_idx = 12;
         let mut res_str = String::new();
@@ -252,7 +279,7 @@ impl ColHeader
     pub fn modify_data_size_in_file(
         &self, 
         f: &mut File, 
-    ) -> Result<(), io_err>
+    ) -> Result<(), DbError>
     {
         if self.is_overflow
         {
@@ -293,13 +320,14 @@ impl ColHeader
         format!("{}/{}_{}", DB_DATA_DIR, self.col_name ,self.col_id)
     }
 
-    pub fn get_next_file_path(&self) -> String
+    pub fn get_next_file_path(&self) -> Result<String, DbError>
     {
         if self.is_overflow
         {
-            return format!("{}/{}_{}", DB_DATA_DIR, self.col_name ,self.col_id + 1);
+            return Ok(format!("{}/{}_{}", DB_DATA_DIR, self.col_name ,self.col_id + 1));
         }
-        panic!("There is no next file path since there is no overflow in current file");
+
+        Err(DbError::Other("There is no next file path since there is no overflow in current file".to_string()))
     }
 }
 

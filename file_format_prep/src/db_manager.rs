@@ -1,14 +1,13 @@
 use crate::storage::col_data::ColData;
 use crate::storage::col_header::ColHeader;
 use crate::storage::metadata_structs::DbMetadata;
-use crate::constants::{AllowedColTypes, BATCH_SIZE, CHUNK_SIZE_BYTES, DB_DATA_DIR, METADATA_FILE_PATH};
+use crate::constants::{AllowedColTypes, BATCH_SIZE, METADATA_FILE_PATH};
 use crate::csv_reader;
+use crate::errors::DbError;
 
+use std::io::ErrorKind as err_kind;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Error as io_err, Write};
-use std::io::ErrorKind as err_kind;
-use std::io::{Seek, SeekFrom};
 
 pub struct DbManager
 {
@@ -36,23 +35,21 @@ impl DbManager
         }
     }
 
-    pub fn init_db(&mut self) -> Result<(), io_err>
+    pub fn init_db(&mut self) -> Result<(), DbError>
     {
         // To start db, db metadata file must be present
         self.db_meta = Some(
             match DbMetadata::read_from_file(&self.metadata_dir_path)
             {
                 Ok(meta) => meta,
-                Err(e) => {
-                    // if there is no metadata file, we create a new one
-                    if e.kind() == err_kind::NotFound 
-                    {
+                Err(DbError::IoError(ref io_err)) 
+                    if io_err.kind() == err_kind::NotFound => {
+                        // if there is no metadata file, we create a new one
                         let db = DbMetadata::new_empty()?;
                         db.save_to_file(&self.metadata_dir_path)?;
                         db
-                    }
-                    else {return Err(e);}
-                }
+                    },
+                Err(e) => return Err(e)
             }
         );
         Ok(())
@@ -66,7 +63,7 @@ impl DbManager
         &mut self, 
         csv_path: &str, 
         delim: u8
-    ) -> Result<(), String>
+    ) -> Result<(), DbError>
     {
         let (metadata, col_data) = 
                 DbManager::_get_data_and_metadata_from_csv(csv_path, delim)?;
@@ -90,14 +87,17 @@ impl DbManager
                 for str_val in col_data_vec {
                     match str_val.parse::<i64>() {
                         Ok(val) => int_values.push(val),
-                        Err(e) => return Err(format!("Failed to parse '{}' as i64: {}", str_val, e))
+                        Err(e) => return Err(
+                            DbError::Other(
+                                format!("Failed to parse '{}' as i64: {}", str_val, e)
+                            ))
                     }
                 }
                 
                 // Process data in BATCH_SIZE chunks 
                 for chunk in int_values.chunks(BATCH_SIZE) 
                 {
-                    col_data_storage.save_to_file(chunk);                  
+                    col_data_storage.save_to_file(chunk)?; 
                 }
             }
             else 
@@ -106,16 +106,13 @@ impl DbManager
 
                 for chunk in col_data_vec.chunks(BATCH_SIZE)
                 {
-                    col_data_storage.save_to_file(chunk);
+                    col_data_storage.save_to_file(chunk)?;
                 }
             }
         }
 
-        match metadata.save_to_file(METADATA_FILE_PATH)
-        {
-            Ok(()) => (),
-            Err(e) => return Err(format!("second metdata save to file, {}", e))
-        }
+        metadata.save_to_file(METADATA_FILE_PATH)?;
+
         self.db_meta = Some(metadata);
 
         Ok(())
@@ -123,31 +120,43 @@ impl DbManager
 
     /// Function reads whole column data and calculates either mean of its 
     /// values or counts how many of each character there is 
-    pub fn read_col_data(&mut self, col_name: &str) -> Result<usize, String>
+    pub fn read_col_data(&mut self, col_name: &str) -> Result<usize, DbError>
     {
-        let meta = self.db_meta.as_ref();
-        if meta.is_none()
-        {
-            return Err(format!("read_col_data - data base is not initialized, db_meta is None"));
-        }
+        let meta = self.db_meta.as_ref()
+            .ok_or_else(|| DbError::Other(
+                "read_col_data - database is not initialized, db_meta is None".to_string()
+            ))?;
 
-        let meta = meta.unwrap();
         if !meta.col_names_idxs().contains_key(col_name)
         {
-            return Err(format!("read_col_data - given col name: {} is not present in database", col_name));
+            return Err(DbError::InvalidColumnName {
+                msg: "Column name not present in database".to_string(),
+                name: col_name.to_string()
+            });
         }
 
-        let c_idx = *meta.col_names_idxs().get(col_name).unwrap();
-        let c_type = AllowedColTypes::from_u8(*meta.col_types().get(c_idx).unwrap()).unwrap();
+        let c_idx = *meta.col_names_idxs()
+            .get(col_name)
+            .ok_or_else(|| DbError::Other(
+                format!("read_col_data - col_names_idx - column '{}' index not found", col_name)
+            ))?;
+
+        let c_type = AllowedColTypes::from_u8(
+            *meta.col_types()
+                .get(c_idx)
+                .ok_or_else(|| DbError::Other(
+                    format!("read_col_data - column type at index {} not found", c_idx)
+                ))?
+        )?;
 
         let file_path = meta.col_files_paths().get(col_name).unwrap().first().unwrap();
 
-        let f = File::open(file_path).unwrap();
+        let f = File::open(file_path)?;
         let mut n_rows: usize = 0;
 
         if c_type == AllowedColTypes::IntType
         {
-            let col_data = ColData::<i64>::read_from_file(f);
+            let col_data = ColData::<i64>::read_from_file(f)?;
             n_rows = col_data.n_rows();
 
             self.int_storage_map.insert(
@@ -157,7 +166,7 @@ impl DbManager
         }
         else 
         {
-            let col_data = ColData::<String>::read_from_file(f);
+            let col_data = ColData::<String>::read_from_file(f)?;
             n_rows = col_data.n_rows();
 
             self.str_storage_map.insert(
@@ -169,14 +178,12 @@ impl DbManager
         Ok(n_rows)
     }
 
-    pub fn read_all_col_data(&mut self) -> Result<(), String>
+    pub fn read_all_col_data(&mut self) -> Result<(), DbError>
     {
-        let meta = self.db_meta.as_ref();
-        if meta.is_none()
-        {
-            return Err(format!("read_all_col_data - data base is not initialized, db_meta is None"));
-        }
-        let meta = meta.unwrap();
+        let meta = self.db_meta.as_ref()
+            .ok_or_else(|| DbError::Other(
+                "read_all_col_data - database is not initialized, db_meta is None".to_string()
+            ))?;
 
         let column_names = meta.col_names().clone();
 
@@ -193,7 +200,11 @@ impl DbManager
                 let n = self.read_col_data(&name)?;
                 if self.row_count != n
                 {
-                    return Err(format!("read_all_col_data - column: '{}', has different row count: '{}' than the others: '{}'", name, n, self.row_count));
+                    return Err(DbError::SizeMismatch {
+                        msg: format!("DbManager::read_all_col_data - column '{}' has different row count", name),
+                        size_1: n,
+                        size_2: self.row_count
+                    });
                 }
             }
         }
@@ -252,26 +263,20 @@ impl DbManager
     fn _get_data_and_metadata_from_csv(
         csv_path: &str, 
         delim: u8
-    ) -> Result<(DbMetadata, Vec<Vec<String>>), String>
+    ) -> Result<(DbMetadata, Vec<Vec<String>>), DbError>
     {
         if delim != b',' && delim != b'\t'
         {
-            return Err(format!("We support either csv or tsv"));
+            return Err(DbError::Other(
+                "We support only csv (comma) or tsv (tab) delimiters".to_string()
+            ));
         }
 
         let (types, names, col_data) = csv_reader::read_csv(csv_path, delim);
 
-        let metadata = match DbMetadata::new(types, names)
-        {
-            Ok(m) => m,
-            Err(e) =>  return Err(format!("init_from_csv - metadata::new - {}", e))
-        };
+        let metadata = DbMetadata::new(types, names)?;
 
-        match metadata.save_to_file(METADATA_FILE_PATH)
-        {
-            Ok(_) => (),
-            Err(e) => return Err(format!("init_from_csv - metdata::save_to_file - {}", e))
-        }
+        metadata.save_to_file(METADATA_FILE_PATH)?;
 
         Ok((metadata, col_data))
     }

@@ -1,7 +1,14 @@
+use crate::errors::DbError;
 
-pub fn delta_encode(batch: &[i64]) -> Vec<i64>
+pub fn delta_encode(batch: &[i64]) -> Result<Vec<i64>, DbError>
 {
-    let min_val = *batch.iter().min().unwrap();
+    let min_val = *batch
+        .iter()
+        .min()
+        .ok_or_else(|| DbError::Other(
+            "delta_encode: cannot find minimum value in empty batch".to_string()
+        ))?;
+
     let mut delta_encoded_vec: Vec<i64> = vec![min_val];
     let mut first_encountered = true;
 
@@ -18,7 +25,7 @@ pub fn delta_encode(batch: &[i64]) -> Vec<i64>
         delta_encoded_vec.push(*elem - min_val);
     }
 
-    delta_encoded_vec
+    Ok(delta_encoded_vec)
 }
 
 pub fn vle_encode_u(buf: &mut Vec<u8>, mut val: u64)
