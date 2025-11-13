@@ -89,7 +89,6 @@ impl ColData<i64>
         print!("decoded: ");
         loop 
         {
-            println!("size_read: {size_read}");
             if buf_idx >= bytes_read
             {
                 let is_break = ColData::_read_new_data(
@@ -134,6 +133,7 @@ impl ColData<i64>
 
         println!();
         println!("average: {}", average);
+        println!();
 
         ColData {
             header: header,
@@ -150,7 +150,7 @@ impl ColData<i64>
     /// - DB manager will read strings from files, convert BATCH_SIZE of them 
     /// into vector of i64 and we will get this vector and will need to 
     /// serialize it and save to file
-    pub fn save_to_file(&mut self, ints: &Vec<i64>)
+    pub fn save_to_file(&mut self, ints: &[i64])
     {
         // TODO: better error handling
         if ints.len() > BATCH_SIZE
@@ -158,6 +158,8 @@ impl ColData<i64>
             panic!("ColData - save_to_file - vector of data has greater size than BATCH_SIZE");
         }
 
+        println!("Saving ints: {:?}", ints);
+        println!();
         let mut f: File = self._get_file_handle();
         let ints_encoded = ColData::_vle_encode(ints);
 
@@ -242,6 +244,7 @@ impl ColData<i64>
         let f: File;
         if self.first_time_saving
         {
+            println!("first time saving");
             self.first_time_saving = false;
 
             // we get file handle to created file, to which we will append data
@@ -249,14 +252,17 @@ impl ColData<i64>
         }
         else 
         {
+            println!("Not saving first time");
             // We're not saving for the first time, so there should be file that
             // we previously created so we can open it
             if let Some(file) = self.file_handle.take()
             {
+                println!("File handle present");
                 f = file;
             }
             else 
             {
+                println!("file handle not present");
                 f = File::open(self.header.get_file_path()).unwrap();
             }
         }
@@ -304,6 +310,10 @@ impl ColData<i64>
                 &buf).unwrap();
         }
 
+        // TODO: add variable that checks this
+        // We might have not updated data in header so we do it now to be sure
+        self.header.modify_data_size_in_file(&mut f).unwrap();
+
         f
     }
 
@@ -319,16 +329,18 @@ impl ColData<i64>
         buf: &[u8],
     ) ->Result<File, io_err>
     {
+        println!("_save_data_chunk_to_file - bytes: {}", bytes_read);
         match self.header.increase_data_size(bytes_read as u32)
         {
             Ok(_) => {
+                println!("Enough space in file, we will save: {} bytes", bytes_read);
                 // We will append to a file so we always know were to write
                 f.seek(SeekFrom::End(0))?;
                 f.write(&buf[..bytes_read])?;
                 return Ok(f);
             }
             Err(free_space_size) => {
-                println!("Not enough space in file, we will write only a part of a chunk: {} bytes", free_space_size);
+                println!("Not enough space in file, we will write only a part of a chunk, free space left to write: {} bytes", free_space_size);
 
                 // we save updated col_header to a file
                 self.header.modify_data_size_in_file(&mut f)?;
@@ -355,7 +367,7 @@ impl ColData<i64>
     }
 
 
-    fn _vle_encode(vals: &Vec<i64>) -> Vec<u8>
+    fn _vle_encode(vals: &[i64]) -> Vec<u8>
     {
         let delta_encoded_vec = delta_encode(vals);
         let mut vle_encoded_vec: Vec<u8> = Vec::new();

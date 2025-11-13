@@ -1,7 +1,7 @@
 use crate::storage::col_data::ColData;
 use crate::storage::col_header::ColHeader;
 use crate::storage::metadata_structs::DbMetadata;
-use crate::constants::{METADATA_FILE_PATH, DB_DATA_DIR, AllowedColTypes, CHUNK_SIZE_BYTES};
+use crate::constants::{AllowedColTypes, BATCH_SIZE, CHUNK_SIZE_BYTES, DB_DATA_DIR, METADATA_FILE_PATH};
 use crate::csv_reader;
 
 use std::collections::HashMap;
@@ -16,19 +16,19 @@ pub struct DbManager
     str_cols_map: HashMap<String, ColData<String>>,
     int_cols_map: HashMap<String, ColData<i64>>,
     metadata_dir_path: String,
-    col_dir_path: String
+    col_dir_path: String,
 }
 
 impl DbManager
 {
-    pub fn new() -> DbManager
+    pub fn new(cols_dir_path: &str) -> DbManager
     {
         DbManager{
             db_meta: None,
             str_cols_map: HashMap::new(),
             int_cols_map: HashMap::new(),
             metadata_dir_path: String::from(METADATA_FILE_PATH),
-            col_dir_path: String::from(DB_DATA_DIR),
+            col_dir_path: String::from(cols_dir_path),
         }
     }
 
@@ -54,7 +54,10 @@ impl DbManager
         Ok(())
     }
 
-    /// Currently naive implementation just to create some files for our db
+    /// Currently naive implementation just to create some files for our db <br>
+    /// !!!!!!!! <br> 
+    /// !!!!!!!! NOT STREAMING, so probably huge csv files will give error <br>
+    /// !!!!!!!! 
     pub fn init_from_csv(&mut self, csv_path: &str) -> Result<(), String>
     {
         let (types, names, col_data) = csv_reader::read_csv(csv_path, b'\t');
@@ -73,67 +76,54 @@ impl DbManager
 
         let col_names = metadata.col_names();
         let col_types = metadata.col_types();
+        let n_cols = col_names.len();
 
-        let mut buf = [0; CHUNK_SIZE_BYTES];
-        let buf_len = buf.len();
-        let mut buf_idx = 0;
-        let mut vals: Vec<u8>; 
+        // In metadata we have all information about columns so we can populate
+        // hash map that will store column_name : ColData objects which handle
+        // deserialization and serialization of data
+        for idx in 0..n_cols
+        {
+            let col_name = col_names.get(idx).unwrap().clone();
+            let col_type = AllowedColTypes::from_u8(*col_types.get(idx).unwrap()).unwrap();
+            let col_h = ColHeader::new_empty(col_type, col_name.clone()).unwrap();
+            if col_type == AllowedColTypes::IntType
+            {
+                let col_d: ColData<i64> = ColData::new(col_h).unwrap();
+                self.int_cols_map.insert(col_name, col_d);
 
-        // What this loop does: 
-        // - In col_data we store vectors of strings, each vector stores data
-        //   for separate column
-        // - We get col_type and col_name so that we can create new col_header
-        //   and save it to file; in the same file we will also save col_data
-        //   by appending to this file
-        // - Then we iterate over col_data_vec and check if value should be 
-        //   string or i64, we make array of bytes from it and pass it to 
-        //   populate_buf function that iterates over this array of bytes
-        // - If populate_buf buf fills buf it saves data chunk to a file
+            }
+            else 
+            {
+                println!("String col not impl yet");
+            }
+        }
+
         for (idx, col_data_vec) in col_data.iter().enumerate()
         {
             
-            let col_type = AllowedColTypes::from_u8(*col_types.get(idx).unwrap())?;
-            let col_name = col_names.get(idx).unwrap().clone();
-            let mut col_h = ColHeader::new_empty(col_type, col_name).unwrap();
+            let c_type = AllowedColTypes::from_u8(*col_types.get(idx).unwrap())?;
+            let c_name = col_names.get(idx).unwrap().clone();
 
-            let (_, mut f) = col_h.save_to_file(DB_DATA_DIR).unwrap();
+            if c_type == AllowedColTypes::IntType
+            {
+                let col_data_storage = self.int_cols_map.get_mut(&c_name).unwrap();
 
-            // for val in col_data_vec
-            // {
-            //     if col_type == AllowedColTypes::StrType
-            //     {
-            //         vals = val.as_bytes().try_into().unwrap();
-            //         // Read strings are not null terminated, we need to add this
-            //         // by ourselves
-            //         vals.push(b'\0');
-            //     }
-            //     else
-            //     {
-            //         let int_val: i64 = val.parse().unwrap();
-            //         vals = int_val.to_be_bytes().try_into().unwrap();
-            //     }
+                // Parse strings to i64
+                let mut int_values: Vec<i64> = Vec::new();
+                for str_val in col_data_vec {
+                    match str_val.parse::<i64>() {
+                        Ok(val) => int_values.push(val),
+                        Err(e) => return Err(format!("Failed to parse '{}' as i64: {}", str_val, e))
+                    }
+                }
+                
+                // Process data in BATCH_SIZE chunks 
+                for chunk in int_values.chunks(BATCH_SIZE) {
+                    col_data_storage.save_to_file(chunk);                  
+                }
+                // FOR TESTING WE SAVE ONLY ONE FILE
+            }
 
-            //     f = self.populate_buf(
-            //         &mut buf_idx, 
-            //         buf_len, 
-            //         &mut buf, 
-            //         &vals, 
-            //         f, 
-            //         &mut col_h);
-            // }
-
-            // We have written all data apart from last chunk (buf_idx was not 
-            // zeroed in populate buf) to the file; this chunk is already whole 
-            // in buf 
-            // if idx == col_data.len() - 1 && buf_idx != 0
-            // {
-            //     let _ = self.save_data_chunk_to_file(
-            //         f, 
-            //         &mut col_h, 
-            //         buf_idx, 
-            //         &mut buf
-            //     );
-            // }
         }
 
         match metadata.save_to_file(METADATA_FILE_PATH)
@@ -151,22 +141,32 @@ impl DbManager
     /// values or counts how many of each character there is 
     pub fn read_col_data(&self, col_name: &str) -> Result<(), String>
     {
-        if self.db_meta.is_none()
+        let meta = self.db_meta.as_ref();
+        if meta.is_none()
         {
             return Err(format!("read_col_data - data base is not initialized, db_meta is None"));
         }
-        if !self.db_meta.as_ref().unwrap().col_names_idxs().contains_key(col_name)
+
+        let meta = meta.unwrap();
+        if !meta.col_names_idxs().contains_key(col_name)
         {
             return Err(format!("read_col_data - given col name: {} is not present in database", col_name));
         }
 
-        let meta = self.db_meta.as_ref().unwrap();
-        let file_names = meta.col_files_paths().get(col_name).unwrap();
-        let mut f = File::open(file_names.get(0).unwrap()).unwrap();
+        let c_idx = *meta.col_names_idxs().get(col_name).unwrap();
+        let c_type = AllowedColTypes::from_u8(*meta.col_types().get(c_idx).unwrap()).unwrap();
 
-        if !self.str_cols_map.contains_key(col_name)
+        let file_path = meta.col_files_paths().get(col_name).unwrap().first().unwrap();
+
+        let f = File::open(file_path).unwrap();
+
+        if c_type == AllowedColTypes::IntType
         {
-            // let col_h = ColHeader::read_from_buf(curr_buf_idx, bytes_read, buf)
+            let _ = ColData::<i64>::read_from_file(f);
+        }
+        else 
+        {
+            println!("String not implemented yet");
         }
 
         Ok(())

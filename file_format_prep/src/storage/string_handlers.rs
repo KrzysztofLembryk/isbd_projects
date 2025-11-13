@@ -18,6 +18,10 @@ pub fn save_string_to_file_with_null_char(
     f: &mut File
 ) -> Result<(), io_err>
 {
+    if s.len() > MAX_COL_NAME_LEN
+    {
+        return Err(io_other_err_wrapper(&format!("Column :'{}' has length greater than max allowed len: {}", s, MAX_COL_NAME_LEN)));
+    }
     let null_terminator = [b'\0'];
 
     if !s.is_ascii()
@@ -95,7 +99,7 @@ pub fn read_string_from_buf(
 
 pub fn check_col_name_correctness(col_name: &String) -> Result<(), io_err>
 {
-    if col_name.len() > 255
+    if col_name.len() > MAX_COL_NAME_LEN
     {
         return Err(io_other_err_wrapper("ColHeader - column name exceeds 255 characters"));
     }

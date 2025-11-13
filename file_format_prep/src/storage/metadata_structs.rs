@@ -46,7 +46,7 @@ pub struct DbMetadata
     magic_word: u32,
     col_count: u16,
     col_files_count: Vec<u8>,
-    col_types: Vec<u8>,
+    col_types: Vec<u8>, // TODO: change this to AllowedTypes
     col_names: Vec<String>, 
     col_files_paths: HashMap<String, Vec<String>>, // k: col_name, v: file_path
     col_names_idxs: HashMap<String, usize>

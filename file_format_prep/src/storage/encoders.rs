@@ -1,5 +1,5 @@
 
-pub fn delta_encode(batch: &Vec<i64>) -> Vec<i64>
+pub fn delta_encode(batch: &[i64]) -> Vec<i64>
 {
     let min_val = *batch.iter().min().unwrap();
     let mut delta_encoded_vec: Vec<i64> = vec![min_val];
