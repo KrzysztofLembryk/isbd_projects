@@ -17,6 +17,8 @@ pub struct DbManager
     int_cols_map: HashMap<String, ColData<i64>>,
     metadata_dir_path: String,
     col_dir_path: String,
+    row_count: usize, 
+    is_row_count_init: bool,
 }
 
 impl DbManager
@@ -29,6 +31,8 @@ impl DbManager
             int_cols_map: HashMap::new(),
             metadata_dir_path: String::from(METADATA_FILE_PATH),
             col_dir_path: String::from(cols_dir_path),
+            row_count: 0,
+            is_row_count_init: false,
         }
     }
 
@@ -58,9 +62,14 @@ impl DbManager
     /// !!!!!!!! <br> 
     /// !!!!!!!! NOT STREAMING, so probably huge csv files will give error <br>
     /// !!!!!!!! 
-    pub fn init_from_csv(&mut self, csv_path: &str) -> Result<(), String>
+    pub fn init_from_csv(&mut self, csv_path: &str, delim: u8) -> Result<(), String>
     {
-        let (types, names, col_data) = csv_reader::read_csv(csv_path, b'\t');
+        if delim != b',' && delim != b'\t'
+        {
+            return Err(format!("We support either csv or tsv"));
+        }
+
+        let (types, names, col_data) = csv_reader::read_csv(csv_path, delim);
 
         let metadata = match DbMetadata::new(types, names)
         {
@@ -139,7 +148,7 @@ impl DbManager
 
     /// Function reads whole column data and calculates either mean of its 
     /// values or counts how many of each character there is 
-    pub fn read_col_data(&self, col_name: &str) -> Result<(), String>
+    pub fn read_col_data(&mut self, col_name: &str) -> Result<usize, String>
     {
         let meta = self.db_meta.as_ref();
         if meta.is_none()
@@ -159,36 +168,64 @@ impl DbManager
         let file_path = meta.col_files_paths().get(col_name).unwrap().first().unwrap();
 
         let f = File::open(file_path).unwrap();
+        let mut n_rows: usize = 0;
 
         if c_type == AllowedColTypes::IntType
         {
-            let _ = ColData::<i64>::read_from_file(f);
+            let col_data = ColData::<i64>::read_from_file(f);
+            n_rows = col_data.n_rows();
+
+            self.int_cols_map.insert(
+                String::from(col_name),  
+                col_data
+            );
         }
         else 
         {
             println!("String not implemented yet");
         }
 
-        Ok(())
+        Ok(n_rows)
     }
 
-    pub fn run(&mut self, column_names: &Vec<String>) -> Result<(), &str>
+    pub fn read_all_col_data(&mut self) -> Result<(), String>
     {
-        let meta = self.db_meta.as_ref().unwrap();
-
-        if column_names.iter().any(|name| !meta.col_names_idxs().contains_key(name))
+        let meta = self.db_meta.as_ref();
+        if meta.is_none()
         {
-            return Err("passed column name is not present in database");
+            return Err(format!("read_all_col_data - data base is not initialized, db_meta is None"));
         }
+        let meta = meta.unwrap();
+
+        let column_names = meta.col_names().clone();
+
 
         for name in column_names
         {
-            let file_path = meta.col_files_paths().get(name).unwrap().first().unwrap();
+            if !self.is_row_count_init
+            {
+                self.is_row_count_init = true;
+                self.row_count = self.read_col_data(&name)?;
+            }
+            else 
+            {
+                let n = self.read_col_data(&name)?;
+                if self.row_count != n
+                {
+                    return Err(format!("read_all_col_data - column: '{}', has different row count: '{}' than the others: '{}'", name, n, self.row_count));
+                }
+            }
+        }
 
-            let f = File::open(file_path).unwrap();
+        for (name, data) in &self.int_cols_map
+        {
+            println!("{}, avg: {}", name, data.result());
+        }
 
-            let col_data = ColData::read_from_file(f);
+        for (name, data) in &self.str_cols_map
+        {
 
+            println!("{}, count: {}", name, data.result());
         }
 
         Ok(())

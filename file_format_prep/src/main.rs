@@ -16,9 +16,12 @@ use file_format_prep::constants::{AllowedColTypes, DB_DATA_DIR};
 
 fn main() 
 {
+    let delim = b'\t';
+    let tsv_file_path = "./db_data/sample_med.tsv";
+
     let mut db_manager = DbManager::new(DB_DATA_DIR);
 
-    // match db_manager.init_from_csv("./db_data/sample_med.tsv")
+    // match db_manager.init_from_csv(tsv_file_path, delim)
     // {
     //     Ok(_) => (),
     //     Err(e) => panic!("{e}")

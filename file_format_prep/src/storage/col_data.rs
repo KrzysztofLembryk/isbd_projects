@@ -36,7 +36,7 @@ pub struct ColData<T: ColType>
     header: ColHeader,
     data: Vec<T>,
     n_rows: usize,
-    average: f64,
+    result: f64,
     file_handle: Option<File>,
     first_time_saving: bool,
 }
@@ -54,10 +54,15 @@ impl<T: ColType> ColData<T>
             header: header,
             data: Vec::new(),
             n_rows: 0,
-            average: 0.0,
+            result: 0.0,
             file_handle: None,
             first_time_saving: true
         })
+    }
+
+    pub fn n_rows(&self) -> usize
+    {
+        self.n_rows
     }
 
     fn _read_new_data(
@@ -336,7 +341,7 @@ impl ColData<i64>
             header: header,
             data: result_vec,
             n_rows: n_rows,
-            average: average,
+            result: average,
             file_handle: None, // maybe better to store f?
             first_time_saving: false
         }
@@ -365,6 +370,11 @@ impl ColData<i64>
         self.file_handle = Some(f);
     }
 
+
+    pub fn result(&self) -> f64
+    {
+        self.result
+    }
     // ########################################################################
     // ############################ PRIVATE API ###############################
     // ########################################################################
@@ -425,6 +435,15 @@ impl ColData<i64>
     }
 }
 
+
+impl ColData<String>
+{
+
+    pub fn result(&self) -> f64
+    {
+        self.result
+    }
+}
 //##############################################################################
 //######################## PRIVATE HELPER FUNCTIONS ############################
 //##############################################################################
