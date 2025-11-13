@@ -187,7 +187,6 @@ impl DbManager
 
         let column_names = meta.col_names().clone();
 
-
         for name in column_names
         {
             if !self.is_row_count_init
