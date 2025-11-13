@@ -147,18 +147,15 @@ impl<T: ColType> ColData<T>
         buf: &[u8],
     ) ->Result<File, io_err>
     {
-        println!("_save_data_chunk_to_file - bytes: {}", bytes_read);
         match self.header.increase_data_size(bytes_read as u32)
         {
             Ok(_) => {
-                println!("Enough space in file, we will save: {} bytes", bytes_read);
                 // We will append to a file so we always know were to write
                 f.seek(SeekFrom::End(0))?;
                 f.write(&buf[..bytes_read])?;
                 return Ok(f);
             }
             Err(free_space_size) => {
-                println!("Not enough space in file, we will write only a part of a chunk, free space left to write: {} bytes", free_space_size);
 
                 // we save updated col_header to a file
                 self.header.modify_data_size_in_file(&mut f)?;
@@ -256,27 +253,21 @@ impl<T: ColType> ColData<T>
         let f: File;
         if self.first_time_saving
         {
-            println!("first time saving");
             self.first_time_saving = false;
 
-            println!("flag set to false");
             // we get file handle to created file, to which we will append data
             (_, f) = self.header.save_to_file(DB_DATA_DIR).unwrap();
-            println!("after save to file");
         }
         else 
         {
-            println!("Not saving first time");
             // We're not saving for the first time, so there should be file that
             // we previously created so we can open it
             if let Some(file) = self.file_handle.take()
             {
-                println!("File handle present");
                 f = file;
             }
             else 
             {
-                println!("file handle not present");
                 f = File::open(self.header.get_file_path()).unwrap();
             }
         }
@@ -311,8 +302,6 @@ impl ColData<i64>
         let mut n_rows: usize = 0;
         let mut average: f64 = 0.0;
 
-        println!("col data size: {}", header.size_of_data());
-        print!("decoded: ");
         loop 
         {
             if buf_idx >= bytes_read
@@ -342,7 +331,6 @@ impl ColData<i64>
                                 &mut min_val);
 
                 result_vec.push(decoded_val);
-                print!("{} ", decoded_val);
 
                 average = ((average * n_rows as f64) + decoded_val as f64) 
                         / ((n_rows + 1) as f64);
@@ -356,10 +344,6 @@ impl ColData<i64>
             }
             buf_idx += 1;
         }
-
-        println!();
-        println!("average: {}", average);
-        println!();
 
         ColData {
             header: header,
@@ -384,8 +368,6 @@ impl ColData<i64>
             panic!("ColData - save_to_file - vector of data has greater size than BATCH_SIZE");
         }
 
-        println!("Saving ints: {:?}", ints);
-        println!();
         let mut f: File = self._get_file_handle();
         let ints_encoded = ColData::_vle_encode(ints);
 
@@ -501,8 +483,6 @@ impl ColData<String>
         let mut zstd_frame_size: u32 = 0;
         let nbr_of_size_bytes: u32 = std::mem::size_of::<u32>() as u32;
 
-        println!("col data size: {}", header.size_of_data());
-        print!("decoded: ");
         loop 
         {
             if buf_idx >= bytes_read
@@ -586,12 +566,8 @@ impl ColData<String>
             panic!("ColData<String> - save_to_file - vector of data has greater size than allowed BATCH_SIZE");
         }
 
-        println!("Saving strings: {:?}", strings);
-        println!();
         let mut f: File = self._get_file_handle();
-        println!("file handle got");
         let strs_encoded = ColData::_zstd_encode(strings);
-        println!("data encoded");
 
         f = self._do_the_save(&strs_encoded, f);
 
