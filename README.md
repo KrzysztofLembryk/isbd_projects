@@ -7,6 +7,9 @@ All projects will be done in RUST.
 
 # Useful links
 
+## metastore 
+https://jeremiahhansen.medium.com/evolution-of-the-open-metastore-54bfcf505b8c
+
 ## How to get started impl db
 - https://stackoverflow.com/questions/13177882/implementing-a-database-how-to-get-started
 
