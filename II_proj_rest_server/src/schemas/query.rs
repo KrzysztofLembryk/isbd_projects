@@ -1,6 +1,8 @@
 use crate::schemas::column::{DataColumn};
 use uuid::Uuid;
 use serde;
+use serde::ser::Serialize;
+use serde::de::Deserialize;
 
 #[derive(Clone, Copy, serde::Serialize)]
 pub enum QueryStatus
@@ -12,11 +14,27 @@ pub enum QueryStatus
     FAILED
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Deserialize)]
 pub enum AllowedQuery
 {
     SELECT_Q(SelectQuery),
     COPY_Q(CopyQuery)
+}
+
+// We need to implement serialization since we dont want our response to contain
+// SELECT_Q or COPY_Q in json
+impl Serialize for AllowedQuery
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer 
+    {
+        match self     
+        {
+            AllowedQuery::COPY_Q(q) => q.serialize(serializer),
+            AllowedQuery::SELECT_Q(q) => q.serialize(serializer),
+        }
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -29,9 +47,10 @@ pub struct ShallowQuery
 
 impl ShallowQuery
 {
-    pub fn new(id: &Uuid, status: QueryStatus) -> ShallowQuery
+    pub fn new(status: QueryStatus) -> ShallowQuery
     {
-        ShallowQuery { query_id: id.clone(), status: status}
+        let new_uuid = Uuid::new_v4();
+        ShallowQuery { query_id: new_uuid, status: status}
     }
 }
 
@@ -50,11 +69,30 @@ pub struct Query
     query_definition: AllowedQuery
 }
 
-#[derive(serde::Serialize)]
+impl Query
+{
+    pub fn new(
+        status: QueryStatus, 
+        is_res_available: bool, 
+        query_definition: AllowedQuery
+    ) -> Query
+    {
+        let new_uuid = Uuid::new_v4();
+
+        Query { 
+            query_id: new_uuid, 
+            status: status, 
+            is_res_available: is_res_available, 
+            query_definition 
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ExecuteQueryRequest
 {
     #[serde(rename="queryDefinition")]
-    query_definition: AllowedQuery
+    pub query_definition: AllowedQuery
 }
 
 
@@ -62,8 +100,7 @@ pub struct ExecuteQueryRequest
 /// - When number of columns in source and target doesn't match, user have to 
 /// use "destinationColumns" property to specify which columns data should be 
 /// inserted into.
-/// 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct CopyQuery
 {
     #[serde(rename="sourceFilepath")]
@@ -76,11 +113,19 @@ pub struct CopyQuery
     does_csv_contain_header: bool,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct SelectQuery
 {
     #[serde(rename="tableName")]
     table_name: String
+}
+
+impl SelectQuery
+{
+    pub fn new(table_name: &str) -> SelectQuery
+    {
+        SelectQuery{table_name: String::from(table_name)}
+    }
 }
 
 #[derive(serde::Serialize)]
