@@ -30,22 +30,22 @@ pub const BATCH_SIZE: usize = 10;
 use crate::db::errors::DbError;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum AllowedColTypes {
+pub enum AllowedColType {
     IntType = 0,
     StrType = 1
 }
 
-impl AllowedColTypes
+impl AllowedColType
 {
-    pub fn from_u8(x: u8) -> Result<AllowedColTypes, DbError>
+    pub fn from_u8(x: u8) -> Result<AllowedColType, DbError>
     {
         if x == 0
         {
-            return Ok(AllowedColTypes::IntType);
+            return Ok(AllowedColType::IntType);
         }
         else if x == 1
         {
-            return Ok(AllowedColTypes::StrType);
+            return Ok(AllowedColType::StrType);
         }
         else 
         {
@@ -53,7 +53,7 @@ impl AllowedColTypes
         }
     }
 
-    pub fn to_u8(t: &AllowedColTypes) ->  u8   
+    pub fn to_u8(t: &AllowedColType) ->  u8   
     {
         *t as u8
     }

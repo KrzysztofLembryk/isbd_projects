@@ -7,7 +7,7 @@ use std::fmt;
 use regex::Regex;
 
 use crate::db::errors::{DbError};
-use crate::db::constants::{MAGIC_WORD, DB_DATA_DIR, MAX_COL_NAME_LEN, MAX_COL_COUNT};
+use crate::db::constants::{MAGIC_WORD, DB_DATA_DIR, MAX_COL_NAME_LEN, MAX_COL_COUNT, AllowedColType};
 use crate::db::storage::string_handlers::{StrLenCheckType, 
     read_string_from_buf, save_string_to_file_with_null_char};
 
@@ -30,6 +30,9 @@ enum ReadStages {
     EndedReading
 }
 
+type TableName = String;
+type ColumnName = String;
+type FilePath = String;
 pub struct DbMetadata
 {
     /// In DbMetadata struct we will store all file names, sizes, dirs, etc 
@@ -40,13 +43,9 @@ pub struct DbMetadata
     /// -- col_types: 1 if string, 0 if int
     /// -- col_files_count: these numbers say how many files one column has
     /// -- col_files_paths: paths to given files
-    magic_word: u32,
-    col_count: u16,
-    col_files_count: Vec<u8>,
-    col_types: Vec<u8>, // TODO: change this to AllowedTypes
-    col_names: Vec<String>, 
-    col_files_paths: HashMap<String, Vec<String>>, // k: col_name, v: file_path
-    col_names_idxs: HashMap<String, usize>
+    table_count: u16,
+    table_cols: HashMap<TableName, HashMap<ColumnName, AllowedColType>>,
+    col_files: HashMap<ColumnName, Vec<FilePath>>,
 }
 
 impl  DbMetadata  {
