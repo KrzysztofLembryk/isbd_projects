@@ -8,6 +8,9 @@ actix-web = "4"
 rand = "0.9.2"
 serde = "1.0.228"
 validator = {version = "0.20.0", features = ["derive"]}
+csv = "1.4.0"
+regex = "1.12.2"
+zstd = "0.13.3"
 
 [dependencies.uuid]
 version = "1.18.1"

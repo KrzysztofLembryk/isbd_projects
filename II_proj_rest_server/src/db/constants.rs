@@ -27,7 +27,7 @@ pub const CHUNK_SIZE_BYTES: usize = 50;
 // number of rows we want to read in one go
 pub const BATCH_SIZE: usize = 10; 
 
-use crate::errors::DbError;
+use crate::db::errors::DbError;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum AllowedColTypes {

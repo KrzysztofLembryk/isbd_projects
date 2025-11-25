@@ -65,3 +65,4 @@ async fn post_query(query: web::Json<ExecuteQueryRequest>) -> impl Responder
     
     HttpResponse::Ok().json(id)
 }
+
