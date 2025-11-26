@@ -2,6 +2,7 @@ const MB_1: usize = 1024 * 1024;
 
 pub const MAGIC_WORD: u32 = 0xF1FAA;
 
+pub const FILE_PATH_REGEX: &str = r"^[a-zA-Z./][a-zA-Z0-9_./]*$";
 pub const METADATA_FILE_PATH: &str = "./db_metadata";
 pub const DB_DATA_DIR: &str = "./db_data";
 
@@ -9,7 +10,7 @@ pub const ZSTD_ENCODE_LEVEL: i32 = 3;
 pub const NULL_TERMINATOR_SIZE: usize = 1;
 pub const COLUMN_HEADER_METADATA_SIZE: usize = 12;
 
-// pub const MAX_COL_NAME_LEN: usize = 254; // without null terminator
+// pub const MAX_COL_NAME_LEN: usize = 255; 
 pub const MAX_COL_NAME_LEN: usize = 50; 
 pub const MAX_COL_COUNT: usize = u16::MAX as usize;
 
@@ -28,8 +29,9 @@ pub const CHUNK_SIZE_BYTES: usize = 50;
 pub const BATCH_SIZE: usize = 10; 
 
 use crate::db::errors::DbError;
+use serde;
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum AllowedColType {
     IntType = 0,
     StrType = 1

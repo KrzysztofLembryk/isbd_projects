@@ -10,8 +10,8 @@ use std::fmt;
 
 // metadata plus size plus one char for col name and null terminator
 const COL_HEADER_MIN_SIZE: usize = 14; 
-const COL_HEADER_DATA_SIZE_OFFSET: u64 = 8;
 const COL_HEADER_OVERFLOW_OFFSET: u64 = 7;
+const COL_HEADER_DATA_SIZE_OFFSET: u64 = 8;
 
 pub struct ColHeader
 {

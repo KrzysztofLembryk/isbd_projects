@@ -11,6 +11,7 @@ dependencies = [
  "rand",
  "regex",
  "serde",
+ "serde_json",
  "uuid",
  "validator",
  "zstd",
