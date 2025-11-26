@@ -1,11 +1,7 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
-use std::fmt::format;
 use std::fs::File;
-use std::hash::Hash;
 use std::io::{Read, Write};
 use std::vec;
-use std::fmt;
 use regex::Regex;
 use serde;
 use serde_json;
@@ -15,28 +11,11 @@ use crate::db::constants::{DB_DATA_DIR, MAX_COL_NAME_LEN, MAX_COL_COUNT, Allowed
 use crate::schemas::table;
 use uuid::Uuid;
 
-//##############################################################################
-//############################# CONSTANTS ######################################
-//##############################################################################
-
-const METADATA_INIT_STAGE_SIZE: usize = 6;
-const AFTER_INIT_STAGE_BUFF_IDX: usize = 6;
-// 2^16 bytes buffer, we don't expect metadata file to be big
-const BUFF_SIZE: usize = 65535;
-
-#[derive(PartialEq, Debug)]
-enum ReadStages {
-    InitStage,          // this is initial stage where we always read 6 bytes
-    FilesCountStage,    // this is u8 stage 
-    ColTypesStage,      // this is u8 stage too; values we read are only u8
-    ColNameStage,       // these are String stages, and we read strings of 
-    FilePathStage,       // any length
-    EndedReading
-}
-
 type TableName = String;
+type TableMetadata = (TableName, HashMap<ColumnName, ColMetadata>);
 type ColumnName = String;
 type FilePath = String;
+type TableId = Uuid;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct ColMetadata
@@ -70,7 +49,7 @@ pub struct DbMetadata
     /// -- table_cols: hash map in which for given table_name we store all its
     ///                columns metadata
     table_count: u16,
-    table_cols: HashMap<TableName, HashMap<ColumnName, ColMetadata>>,
+    table_map: HashMap<TableId, TableMetadata>,
     #[serde(skip)]
     file_path: String
 }
@@ -79,32 +58,17 @@ impl DbMetadata
 {
     pub fn new(
         table_count: u16,
-        mut table_cols: HashMap<TableName, HashMap<ColumnName, ColMetadata>>,
+        mut table_map: HashMap<TableId, TableMetadata>,
         file_path: &str
     ) -> Result<DbMetadata, DbError>
     {
-        check_metadata_correctness(table_count, &table_cols, file_path)?;
-
-        for (table_name, col_map) in &mut table_cols
-        {
-            for (name, col_meta) in col_map
-            {
-                if *name != col_meta.c_name
-                {
-                    return Err(DbError::Other(format!("DbMetadata::new:: name: '{}' of column in hashmap KEY, is not the same as name: '{}' of column in hashmap VALUE (ColMetadata) in table: '{}'", name, col_meta.c_name, table_name)));
-                }
-
-                // At first we have only one file for each column, when we read
-                // enough data, we will create another one if the first is full
-                let file_path = format!("{DB_DATA_DIR}/{table_name}/{name}_0");
-
-                col_meta.c_files.push(file_path);
-            }
-        }
+        check_metadata_correctness(table_count, &table_map, file_path)?;
+        // For each column we create a filepath: DB_DIR/table_name/col_name_0
+        create_filepaths_for_all_columns(&mut table_map)?;
 
         Ok(DbMetadata {
             table_count: table_count,
-            table_cols: table_cols,
+            table_map,
             file_path: String::from(file_path)
         })
     }
@@ -146,7 +110,7 @@ impl DbMetadata
 
         check_metadata_correctness(
             metadata.table_count, 
-            &metadata.table_cols, 
+            &metadata.table_map, 
             &metadata.file_path)?;
 
         Ok(metadata)
@@ -191,7 +155,7 @@ impl DbMetadata
 
 fn check_metadata_correctness(
         table_count: u16,
-        table_cols: &HashMap<TableName, HashMap<ColumnName, ColMetadata>>,
+        table_map: &HashMap<TableId, TableMetadata>,
         file_path: &str
 ) -> Result<(), DbError>
 {
@@ -201,17 +165,18 @@ fn check_metadata_correctness(
         return Err(DbError::Other(format!("DbMetadata::new: file_path: '{}', does not satisfy regex: '{}'", file_path, FILE_PATH_REGEX)));
     }
 
-    if table_count as usize != table_cols.len()
+    if table_count as usize != table_map.len()
     {
         return Err(DbError::SizeMismatch{
             msg: format!("DbMetadata::new: table_count has diff len than table_cols map"),
             size_1: table_count as usize,
-            size_2: table_cols.len()
+            size_2: table_map.len()
         });
     }
 
-    for (table_name, col_map) in table_cols
+    for (_, table_meta) in table_map
     {
+        let (table_name, col_map) = table_meta;
         if col_map.len() > MAX_COL_COUNT
         {
             return Err(DbError::SizeExceeded{
@@ -235,4 +200,29 @@ fn check_metadata_correctness(
     Ok(())
 }
 
+fn create_filepaths_for_all_columns(
+        table_map: &mut HashMap<TableId, TableMetadata>,
+) -> Result<(), DbError>
+{
+    for (_, table_meta) in table_map
+    {
+        let (table_name, col_map) = table_meta;
+
+        for (name, col_meta) in col_map
+        {
+            if *name != col_meta.c_name
+            {
+                return Err(DbError::Other(format!("DbMetadata::new:: name: '{}' of column in hashmap KEY, is not the same as name: '{}' of column in hashmap VALUE (ColMetadata) in table: '{}'", name, col_meta.c_name, table_name)));
+            }
+
+            // At first we have only one file for each column, when we read
+            // enough data, we will create another one if the first is full
+            let file_path = format!("{DB_DATA_DIR}/{table_name}/{name}_0");
+
+            col_meta.c_files.push(file_path);
+        }
+    }
+
+    Ok(())
+}
 
