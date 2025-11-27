@@ -28,8 +28,8 @@ impl ResType
     {
         match T::col_type()
         {
-            LogicalColType::IntType => ResType::IntColRes(0.0),
-            LogicalColType::StrType => ResType::StrColRes(0)
+            LogicalColType::INT64 => ResType::IntColRes(0.0),
+            LogicalColType::VARCHAR => ResType::StrColRes(0)
         }
     }
 }
@@ -42,14 +42,14 @@ pub trait ColType
 impl ColType for i64
 {
     fn col_type() -> LogicalColType {
-        LogicalColType::IntType
+        LogicalColType::INT64
     }
 }
 
 impl ColType for String
 {
     fn col_type() -> LogicalColType {
-        LogicalColType::StrType 
+        LogicalColType::VARCHAR 
     }
 }
 

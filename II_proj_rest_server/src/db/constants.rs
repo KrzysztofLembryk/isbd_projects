@@ -31,12 +31,41 @@ pub const CHUNK_SIZE_BYTES: usize = 50;
 // number of rows we want to read in one go
 pub const BATCH_SIZE: usize = 10; 
 
+use crate::db::errors::DbError;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum LogicalColType
 {
-    INT64,
-    VARCHAR
+    INT64 = 0,
+    VARCHAR = 1
+}
+
+impl LogicalColType
+{
+    pub fn to_u8(&self) -> u8
+    {
+        match self
+        {
+            LogicalColType::INT64 => 0,
+            LogicalColType::VARCHAR => 1,
+        }
+    }
+
+    pub fn from_u8(val: u8) -> Result<LogicalColType, DbError>
+    {
+        if val == 0
+        {
+            return Ok(LogicalColType::INT64);
+        }
+        else if val == 1
+        {
+            return Ok(LogicalColType::VARCHAR);
+        }
+        else 
+        {
+            return Err(DbError::ColumnTypeMismatch("AllowedColTypese::from_u8 - got neither 0 nor 1".to_string()));
+        }
+    }
 }
 
 impl fmt::Display for LogicalColType {

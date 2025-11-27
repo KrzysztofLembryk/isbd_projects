@@ -108,7 +108,7 @@ impl ColHeader
         let null_terminator = [b'\0'];
         let header_size = mem::size_of_val(&self.magic_word)
             + mem::size_of_val(&self.col_id)
-            + mem::size_of_val(&LogicalColType::to_u8(&self.col_type))
+            + mem::size_of_val(&self.col_type.to_u8())
             + mem::size_of_val(&self.is_overflow)
             + mem::size_of_val(&self.size_of_data)
             + self.col_name.len() + 1;
