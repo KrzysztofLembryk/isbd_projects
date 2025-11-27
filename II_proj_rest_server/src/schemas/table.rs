@@ -1,4 +1,4 @@
-use crate::schemas::column::{Column, LogicalColType};
+use crate::schemas::column::{Column};
 use serde;
 use uuid::Uuid;
 use std::fmt;
@@ -31,6 +31,16 @@ impl TableSchema
     pub fn push_col(&mut self, col: &Column)
     {
         self.columns.push(col.clone());
+    }
+
+    pub fn name(&self) -> &str
+    {
+        &self.name
+    }
+
+    pub fn columns(&self) -> &Vec<Column>
+    {
+        &self.columns
     }
 }
 

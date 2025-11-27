@@ -3,7 +3,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::io::{Write};
 use zstd;
 
-use crate::db::constants::{AllowedColType, BATCH_SIZE, CHUNK_SIZE_BYTES, DB_DATA_DIR, ZSTD_ENCODE_LEVEL};
+use crate::db::constants::{LogicalColType, BATCH_SIZE, CHUNK_SIZE_BYTES, DB_DATA_DIR, ZSTD_ENCODE_LEVEL};
 use crate::db::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle_decode_i, vle_decode_u};
 
 // TODO: metadata should be updated when we save to file
@@ -28,28 +28,28 @@ impl ResType
     {
         match T::col_type()
         {
-            AllowedColType::IntType => ResType::IntColRes(0.0),
-            AllowedColType::StrType => ResType::StrColRes(0)
+            LogicalColType::IntType => ResType::IntColRes(0.0),
+            LogicalColType::StrType => ResType::StrColRes(0)
         }
     }
 }
 
 pub trait ColType 
 {
-    fn col_type() -> AllowedColType;
+    fn col_type() -> LogicalColType;
 }
 
 impl ColType for i64
 {
-    fn col_type() -> AllowedColType {
-        AllowedColType::IntType
+    fn col_type() -> LogicalColType {
+        LogicalColType::IntType
     }
 }
 
 impl ColType for String
 {
-    fn col_type() -> AllowedColType {
-        AllowedColType::StrType 
+    fn col_type() -> LogicalColType {
+        LogicalColType::StrType 
     }
 }
 

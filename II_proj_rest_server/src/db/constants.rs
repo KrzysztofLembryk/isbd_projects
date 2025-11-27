@@ -1,3 +1,6 @@
+use serde;
+use std::fmt;
+
 const MB_1: usize = 1024 * 1024;
 
 pub const MAGIC_WORD: u32 = 0xF1FAA;
@@ -28,35 +31,19 @@ pub const CHUNK_SIZE_BYTES: usize = 50;
 // number of rows we want to read in one go
 pub const BATCH_SIZE: usize = 10; 
 
-use crate::db::errors::DbError;
-use serde;
 
-#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
-pub enum AllowedColType {
-    IntType = 0,
-    StrType = 1
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)]
+pub enum LogicalColType
+{
+    INT64,
+    VARCHAR
 }
 
-impl AllowedColType
-{
-    pub fn from_u8(x: u8) -> Result<AllowedColType, DbError>
-    {
-        if x == 0
-        {
-            return Ok(AllowedColType::IntType);
+impl fmt::Display for LogicalColType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LogicalColType::INT64 => write!(f, "INT64"),
+            LogicalColType::VARCHAR => write!(f, "VARCHAR"),
         }
-        else if x == 1
-        {
-            return Ok(AllowedColType::StrType);
-        }
-        else 
-        {
-            return Err(DbError::ColumnTypeMismatch("AllowedColTypese::from_u8 - got neither 0 nor 1".to_string()));
-        }
-    }
-
-    pub fn to_u8(t: &AllowedColType) ->  u8   
-    {
-        *t as u8
     }
 }

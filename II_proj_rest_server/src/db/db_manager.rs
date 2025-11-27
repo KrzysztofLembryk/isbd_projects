@@ -1,7 +1,7 @@
 use crate::db::storage::col_data::ColData;
 use crate::db::storage::col_header::ColHeader;
 use crate::db::storage::metadata_structs::DbMetadata;
-use crate::db::constants::{AllowedColType, BATCH_SIZE, METADATA_FILE_PATH};
+use crate::db::constants::{LogicalColType, BATCH_SIZE, METADATA_FILE_PATH};
 use crate::db::csv_reader;
 use crate::db::errors::DbError;
 
@@ -75,10 +75,10 @@ impl DbManager
 
         for (idx, col_data_vec) in col_data.iter().enumerate()
         {
-            let c_type = AllowedColType::from_u8(*col_types.get(idx).unwrap())?;
+            let c_type = LogicalColType::from_u8(*col_types.get(idx).unwrap())?;
             let c_name = col_names.get(idx).unwrap().clone();
 
-            if c_type == AllowedColType::IntType
+            if c_type == LogicalColType::IntType
             {
                 let col_data_storage = self.int_storage_map.get_mut(&c_name).unwrap();
 
@@ -141,7 +141,7 @@ impl DbManager
                 format!("read_col_data - col_names_idx - column '{}' index not found", col_name)
             ))?;
 
-        let c_type = AllowedColType::from_u8(
+        let c_type = LogicalColType::from_u8(
             *meta.col_types()
                 .get(c_idx)
                 .ok_or_else(|| DbError::Other(
@@ -154,7 +154,7 @@ impl DbManager
         let f = File::open(file_path)?;
         let mut n_rows: usize = 0;
 
-        if c_type == AllowedColType::IntType
+        if c_type == LogicalColType::IntType
         {
             let col_data = ColData::<i64>::read_from_file(f)?;
             n_rows = col_data.n_rows();
@@ -237,14 +237,14 @@ impl DbManager
         for idx in 0..n_cols
         {
             let col_name = col_names.get(idx).unwrap().clone();
-            let col_type = AllowedColType
+            let col_type = LogicalColType
                         ::from_u8(*col_types.get(idx).unwrap())
                         .unwrap();
             let col_h = ColHeader
                         ::new_empty(col_type, col_name.clone())
                         .unwrap();
 
-            if col_type == AllowedColType::IntType
+            if col_type == LogicalColType::IntType
             {
                 let col_d: ColData<i64> = ColData::new(col_h).unwrap();
                 self.int_storage_map.insert(col_name, col_d);

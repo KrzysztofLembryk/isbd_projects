@@ -1,22 +1,6 @@
 use serde;
 use std::fmt;
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub enum LogicalColType
-{
-    INT64,
-    VARCHAR
-}
-
-impl fmt::Display for LogicalColType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LogicalColType::INT64 => write!(f, "INT64"),
-            LogicalColType::VARCHAR => write!(f, "VARCHAR"),
-        }
-    }
-}
-
+use crate::db::constants::LogicalColType;
 
 #[derive(serde::Serialize)]
 pub enum DataColumn
@@ -49,6 +33,16 @@ impl Column
     pub fn new_varchar(name: &str) -> Column
     {
         Column { c_name: String::from(name), c_type: LogicalColType::VARCHAR }
+    }
+
+    pub fn c_name(&self) -> &str
+    {
+        &self.c_name
+    }
+
+    pub fn c_type(&self) -> LogicalColType
+    {
+        self.c_type
     }
 }
 

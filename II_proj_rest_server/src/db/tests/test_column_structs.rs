@@ -21,7 +21,7 @@ fn test_create_new_empty()
 {
     let ok_name = String::from("ok_col");
     let ok_col = ColHeader::new_empty(
-                            AllowedColType::IntType, 
+                            LogicalColType::IntType, 
                             ok_name.clone());
 
     assert!(ok_col.is_ok());
@@ -29,7 +29,7 @@ fn test_create_new_empty()
     let ok_col = ok_col.unwrap();
 
     assert_eq!(ok_col.col_id(), 0);
-    assert_eq!(ok_col.col_type(), AllowedColType::IntType);
+    assert_eq!(ok_col.col_type(), LogicalColType::IntType);
     assert_eq!(ok_col.is_overflow(), false);
     assert_eq!(ok_col.size_of_data(), 0);
     assert_eq!(*ok_col.col_name(), ok_name);
@@ -37,8 +37,8 @@ fn test_create_new_empty()
     let not_ascii: String = String::from("Some random ątęxtź");
     let too_long: String = vec!['a'; 256].iter().collect();
 
-    assert!(ColHeader::new_empty(AllowedColType::IntType, not_ascii).is_err());
-    assert!(ColHeader::new_empty(AllowedColType::IntType, too_long).is_err());
+    assert!(ColHeader::new_empty(LogicalColType::IntType, not_ascii).is_err());
+    assert!(ColHeader::new_empty(LogicalColType::IntType, too_long).is_err());
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn test_create_next()
 {
     let ok_name = String::from("ok_col");
     let ok_col = ColHeader::new_empty(
-                            AllowedColType::IntType, 
+                            LogicalColType::IntType, 
                             ok_name.clone());
 
     assert!(ok_col.is_ok());
@@ -59,7 +59,7 @@ fn test_create_next()
     let next_col = next_col.unwrap();
 
     assert_eq!(next_col.col_id(), ok_col.col_id() + 1);
-    assert_eq!(next_col.col_type(), AllowedColType::IntType);
+    assert_eq!(next_col.col_type(), LogicalColType::IntType);
     assert_eq!(next_col.is_overflow(), false);
     assert_eq!(next_col.size_of_data(), 0);
     assert_eq!(*next_col.col_name(), ok_name);
@@ -72,7 +72,7 @@ fn test_save_to_file_wrong_paths()
     let incorrect_path = String::from("./not_folder");
 
     let col_name = String::from("col_name");
-    let col_h = ColHeader::new_empty(AllowedColType::IntType, col_name).unwrap();
+    let col_h = ColHeader::new_empty(LogicalColType::IntType, col_name).unwrap();
 
     assert!(col_h.save_to_file(&empty_path).is_err());
     assert!(col_h.save_to_file(&incorrect_path).is_err());

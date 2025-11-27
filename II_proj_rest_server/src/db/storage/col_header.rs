@@ -1,4 +1,4 @@
-use crate::db::constants::{AllowedColType, DB_DATA_DIR, MAGIC_WORD, MAX_FILE_SIZE};
+use crate::db::constants::{LogicalColType, DB_DATA_DIR, MAGIC_WORD, MAX_FILE_SIZE};
 use crate::db::storage::string_handlers::{StrLenCheckType, read_string_from_buf, check_col_name_correctness};
 use crate::db::errors::{DbError};
 
@@ -18,7 +18,7 @@ pub struct ColHeader
     magic_word: u32,    // magic word saying that this is our db file
     col_id: u16,        // equal to file number - we may have many files for 
                         // one column
-    col_type: AllowedColType,
+    col_type: LogicalColType,
     is_overflow: bool,  // tells us if there are more files with this col data
                         // last file in sequence will have it set to false
     size_of_data: u32,  // size of data without metadata
@@ -29,7 +29,7 @@ impl ColHeader
 {
     pub fn new(
         col_id: u16,
-        col_type: AllowedColType,
+        col_type: LogicalColType,
         is_overflow: bool,
         size_of_data: u32,
         col_name: String
@@ -47,7 +47,7 @@ impl ColHeader
     }
 
     pub fn new_empty(
-        col_type: AllowedColType, 
+        col_type: LogicalColType, 
         col_name: String
     ) -> Result<ColHeader, DbError>
     {
@@ -108,7 +108,7 @@ impl ColHeader
         let null_terminator = [b'\0'];
         let header_size = mem::size_of_val(&self.magic_word)
             + mem::size_of_val(&self.col_id)
-            + mem::size_of_val(&AllowedColType::to_u8(&self.col_type))
+            + mem::size_of_val(&LogicalColType::to_u8(&self.col_type))
             + mem::size_of_val(&self.is_overflow)
             + mem::size_of_val(&self.size_of_data)
             + self.col_name.len() + 1;
@@ -134,7 +134,7 @@ impl ColHeader
         
         f.write(&self.magic_word.to_be_bytes())?;
         f.write(&self.col_id.to_be_bytes())?;
-        f.write(&AllowedColType::to_u8(&self.col_type).to_be_bytes())?;
+        f.write(&LogicalColType::to_u8(&self.col_type).to_be_bytes())?;
 
         let is_overflow: u8 = self.is_overflow
             .try_into()
@@ -193,7 +193,7 @@ impl ColHeader
                             .map_err(|_| DbError::Other(
                                 "ColHeader::read_from_buf - failed to read col_id (expected 2 bytes)".to_string()
                             ))?);
-        let col_type = AllowedColType::from_u8(buf[6])
+        let col_type = LogicalColType::from_u8(buf[6])
                             .map_err(|e| DbError::UnsupportedType(
                                 format!("ColHeader::read_from_buf - {}", e)
                             ))?;
@@ -299,7 +299,7 @@ impl ColHeader
         self.col_id
     }
 
-    pub fn col_type(&self) -> AllowedColType {
+    pub fn col_type(&self) -> LogicalColType {
         self.col_type
     }
 

@@ -26,7 +26,7 @@ async fn get_tables() -> impl Responder
 }
 
 #[get("/table/{table_id}")]
-async fn get_table_info(table_id: web::Path<String>) -> impl Responder
+async fn get_table_details(table_id: web::Path<String>) -> impl Responder
 {
     println!("Fetching table with id: {}", table_id);
 
