@@ -5,6 +5,12 @@ use actix_web::{App, HttpServer};
 #[actix_web::main]
 async fn main() -> std::io::Result<()>
 {
+    // 1. We initialize db_manager
+    // 2. We initialize our Database (i.e. DbMetadata inside db_manager)
+    // 3. We create Arc<RwLock<db_manager>>
+    //      - RwLock - read write lock, allows many readers, but one writer
+    //      - Arc - since we want to be able to share db_manager between Actix 
+    //              threads
     HttpServer::new(|| {
         App::new()
             .service(get_tables)

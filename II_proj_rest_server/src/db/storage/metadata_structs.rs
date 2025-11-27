@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::Path;
-use std::io::{Read, Write};
+use std::io::{Read};
 use std::vec;
 use regex::Regex;
 use serde;
 use serde_json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
+use tokio::fs as t_fs;
 
 use crate::db::errors::{DbError};
 use crate::db::constants::{DB_DATA_DIR, MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX};
@@ -14,34 +16,14 @@ use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::schemas::column::{Column};
 
 type TableName = String;
-type TableMetadata = (TableName, HashMap<ColumnName, ColMetadata>);
 type ColumnName = String;
 type FilePath = String;
 type TableId = Uuid;
 
+// ####################################################
+// DBMETADATA SHOULD BE CRITICAL SECTION - i.e. RwLock?
+// ####################################################
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct ColMetadata
-{
-    // table_name: TableName, // ???
-    c_name: ColumnName,
-    c_type: LogicalColType,
-    c_files: Vec<FilePath>
-}
-
-impl ColMetadata
-{
-    pub fn new(c_name: &str, c_type: LogicalColType) -> ColMetadata
-    {
-        ColMetadata { 
-            c_name: String::from(c_name), 
-            c_type, 
-            c_files: Vec::new()
-        }
-    }
-
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct DbMetadata
 {
     /// In DbMetadata struct we will store all file names, dirs, etc 
@@ -75,35 +57,37 @@ impl DbMetadata
         })
     }
 
-    pub fn new_empty(file_path: &str) -> Result<DbMetadata, DbError>
+    pub fn new_empty(metadata_file_path: &str) -> Result<DbMetadata, DbError>
     {
         let table_count = 0;
-        let table_cols = HashMap::new();
-        DbMetadata::new(table_count, table_cols, file_path)
+        let table_map = HashMap::new();
+        DbMetadata::new(table_count, table_map, metadata_file_path)
     }
 
     /// We do not encode metadata when saving to file.
     /// When saving we overwrite whole previous metadata file
-    pub fn save_to_file(&self) -> Result<(), DbError>
+    /// Maybe we should change save_to_file to get COPY of DbMetadata so that
+    /// we will not block mutex while saving to file????
+    pub async fn save_to_file(metadata: DbMetadata) -> Result<(), DbError>
     {
-        let mut f = File::create(self.metadata_file_path.clone())?;
-        let buf = serde_json::to_vec(self)
+        let mut f = t_fs::File::create(metadata.metadata_file_path.clone()).await?;
+        let buf = serde_json::to_vec(&metadata)
                             .or_else(|e| 
                                 return Err(DbError::Other(e.to_string()))
                             )?;
 
-        f.write_all(&buf[..])?;
-        f.flush()?;
+        f.write_all(&buf[..]).await?;
+        f.flush().await?;
 
         Ok(())
     }
     
-    pub fn read_from_file(path: &str) -> Result<DbMetadata, DbError>
+    pub async fn read_from_file(path: &str) -> Result<DbMetadata, DbError>
     {
-        let mut f = File::open(path)?;
+        let mut f = t_fs::File::open(path).await?;
         let mut buf = vec![]; 
 
-        f.read_to_end(&mut buf)?;
+        f.read_to_end(&mut buf).await?;
 
         let mut metadata: DbMetadata = serde_json::from_slice(&buf[..])
                                 .or_else(|e| 
@@ -119,27 +103,26 @@ impl DbMetadata
         Ok(metadata)
     }
 
-    pub fn get_tables(&self) -> Vec<ShallowTable>
+    pub async fn get_tables(&self) -> Vec<ShallowTable>
     {
         let mut tables: Vec<ShallowTable> = Vec::new();
 
         for (t_id, t_meta) in &self.table_map
         {
-            let (t_name, _) = t_meta;
-            tables.push(ShallowTable::new(t_id, t_name));
+            tables.push(ShallowTable::new(t_id, &t_meta.table_name));
         }
 
         tables
     }
 
-    pub fn get_table_details(
+    pub async fn get_table_details(
         &self, 
         table_id: &Uuid
     ) -> Result<TableSchema, DbError>
     {
         if let Some(tab_meta) = self.table_map.get(table_id)
         {
-            return Ok(parse_table_metadata_into_table_schema(tab_meta));
+            return Ok(tab_meta.into_table_schema());
         }
 
         Err(DbError::NotFound(format!("Table with id: {}, not found in db.", table_id)))
@@ -147,12 +130,11 @@ impl DbMetadata
 
     /// Function receives TableSchema and adds table with its columns to 
     /// metadata structure, it also **creates dirs and files** for this table
-    pub fn put_table(
+    pub async  fn put_table(
         &mut self, 
         table_schema: &TableSchema
     ) -> Result<TableId, DbError>
     {
-        // When adding table do I create files?
         let table_id = TableId::new_v4();
         let table_name = table_schema.name();
         let columns = table_schema.columns();
@@ -164,14 +146,14 @@ impl DbMetadata
             return Err(DbError::Other(format!("DbMetadata::add_new_table: map contains given table_id: '{}', Uuid::new gave the same id", table_id)));
         }
 
-        create_dirs_if_not_exist(&create_dir_path(&table_id, table_name))?;
+        create_dirs_if_not_exist(&create_dir_path(&table_id, table_name)).await?;
 
         for col in columns
         {
             let col_name = String::from(col.c_name());
             let file_path = create_file_path(&table_id, &table_name, &col_name, file_idx);
 
-            create_file(&file_path)?;
+            create_file(&file_path).await?;
 
             col_map.insert(
                 col_name.clone(), 
@@ -185,7 +167,12 @@ impl DbMetadata
             );
         }
 
-        self.table_map.insert(table_id, (String::from(table_name), col_map));
+        self.table_map.insert(
+            table_id, 
+            TableMetadata {
+            table_name: String::from(table_name),
+            columns: col_map
+        });
         self.table_count += 1;
 
         Ok(table_id)
@@ -196,6 +183,53 @@ impl DbMetadata
     // ###################################################################### 
 
 }
+
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct TableMetadata
+{
+    table_name: TableName,
+    columns: HashMap<ColumnName, ColMetadata>,
+    // row_count: u32 // We should for given table remember how many rows it has
+}
+
+impl TableMetadata
+{
+    fn into_table_schema(&self) -> TableSchema
+    {
+        let mut t_schema = TableSchema::new(&self.table_name);
+
+        for (col_name, col_meta) in &self.columns
+        {
+            t_schema.push_col(&Column::new(col_name, &col_meta.c_type));
+        }
+
+        t_schema
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct ColMetadata
+{
+    // table_name: TableName, // ???
+    c_name: ColumnName,
+    c_type: LogicalColType,
+    c_files: Vec<FilePath>
+}
+
+impl ColMetadata
+{
+    pub fn new(c_name: &str, c_type: LogicalColType) -> ColMetadata
+    {
+        ColMetadata { 
+            c_name: String::from(c_name), 
+            c_type, 
+            c_files: Vec::new()
+        }
+    }
+
+}
+
 
 //##############################################################################
 //######################### PRIVATE HELPER FUNCTIONS ###########################
@@ -224,16 +258,15 @@ fn check_metadata_correctness(
 
     for (_, table_meta) in table_map
     {
-        let (table_name, col_map) = table_meta;
-        if col_map.len() > MAX_COL_COUNT
+        if table_meta.columns.len() > MAX_COL_COUNT
         {
             return Err(DbError::SizeExceeded{
-                msg: format!("DbMetadata::new: number of columns in table: '{}' is greater than MAX_COL_COUNT", table_name),
+                msg: format!("DbMetadata::new: number of columns in table: '{}' is greater than MAX_COL_COUNT", &table_meta.table_name),
                 max: MAX_COL_COUNT
             });
         }
 
-        for (col_name, _) in col_map
+        for (col_name, _) in &table_meta.columns
         {
             if col_name.len() > MAX_COL_NAME_LEN
             {
@@ -248,42 +281,41 @@ fn check_metadata_correctness(
     Ok(())
 }
 
-
-fn create_dirs_if_not_exist(file_path: &str) -> std::io::Result<()>
+async fn create_dirs_if_not_exist(file_path: &str) -> std::io::Result<()>
 {
     let path = Path::new(file_path);
 
     if let Some(parent_dir) = path.parent(){
         if let Some(grandparent_dir) = parent_dir.parent(){
             if !grandparent_dir.exists(){
-                fs::create_dir(grandparent_dir)?;
+                t_fs::create_dir(grandparent_dir).await?;
             }
         }
 
         if !parent_dir.exists(){
-            fs::create_dir_all(parent_dir)?;
+            t_fs::create_dir_all(parent_dir).await?;
         }
     }
 
     Ok(())
 }
 
-fn create_file(file_path: &str) -> std::io::Result<()>
+async fn create_file(file_path: &str) -> std::io::Result<()>
 {
     let path = Path::new(file_path);
 
     if !path.exists(){
-        let f = fs::File::create(path)?;
+        let f = t_fs::File::create(path).await?;
 
         // We sync file to transfer it to disk
-        f.sync_data();
+        f.sync_data().await;
     }
 
     // We need to sync directory to ensure write happended
     if let Some(parent_dir) = path.parent(){
-        let dir = fs::File::open(parent_dir)?;
+        let dir = t_fs::File::open(parent_dir).await?;
 
-        dir.sync_data();
+        dir.sync_data().await;
     }
 
     Ok(())
@@ -295,9 +327,9 @@ fn create_filepaths_for_all_columns(
 {
     for (table_id, table_meta) in table_map
     {
-        let (table_name, col_map) = table_meta;
+        let table_name = &table_meta.table_name;
 
-        for (col_name, col_meta) in col_map
+        for (col_name, col_meta) in &mut table_meta.columns
         {
             if *col_name != col_meta.c_name
             {
@@ -331,19 +363,6 @@ fn create_dir_path(
 ) -> String
 {
     format!("{DB_DATA_DIR}/{table_id}_{table_name}")
-}
-
-fn parse_table_metadata_into_table_schema(t_meta: &TableMetadata) -> TableSchema
-{
-    let (table_name, col_map) = t_meta;
-    let mut t_schema = TableSchema::new(&table_name);
-
-    for (col_name, col_meta) in col_map
-    {
-        t_schema.push_col(&Column::new(&col_name, &col_meta.c_type));
-    }
-
-    t_schema
 }
 
 
