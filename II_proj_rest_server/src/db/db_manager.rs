@@ -1,7 +1,8 @@
 use crate::db::storage::col_data::ColData;
 use crate::db::storage::col_header::ColHeader;
-use crate::db::storage::metadata_structs::DbMetadata;
+use crate::db::storage::metadata::{DbMetadata, TableId};
 use crate::db::constants::{LogicalColType, BATCH_SIZE, METADATA_FILE_PATH, MAX_ALLOWED_METADATA_CHANGES};
+use crate::schemas::query::ShallowQuery;
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::csv_reader;
 use crate::db::errors::DbError;
@@ -18,12 +19,14 @@ pub enum TaskMessage
     Shutdown
 }
 
+
 pub struct DbManager
 {
     db_meta: Option<DbMetadata>,
+    queries_history: Vec<ShallowQuery>,
     metadata_dir_path: String, 
     data_dir_path: String,
-    n_meta_changes: u16,
+    nbr_of_metadata_changes: u16,
     tx_metadata_saver: UnboundedSender<TaskMessage>,
 }
 
@@ -33,9 +36,10 @@ impl DbManager
     {
         DbManager{
             db_meta: None,
+            queries_history: Vec::new(),
             metadata_dir_path: String::from(METADATA_FILE_PATH),
             data_dir_path: String::from(db_data_dir),
-            n_meta_changes: 0,
+            nbr_of_metadata_changes: 0,
             tx_metadata_saver: tx
         }
     }
@@ -108,11 +112,11 @@ impl DbManager
             db_meta_clone = db_meta.clone();
         }
 
-        self.n_meta_changes += 1;
+        self.nbr_of_metadata_changes += 1;
 
-        if self.n_meta_changes >= MAX_ALLOWED_METADATA_CHANGES
+        if self.nbr_of_metadata_changes >= MAX_ALLOWED_METADATA_CHANGES
         {
-            self.n_meta_changes = 0;
+            self.nbr_of_metadata_changes = 0;
             self.send_task_msg(TaskMessage::SaveMetadata(db_meta_clone))?;
         }
         Ok(table_id)

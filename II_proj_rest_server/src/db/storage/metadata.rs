@@ -20,7 +20,46 @@ mod test_column_structs;
 type TableName = String;
 pub type ColumnName = String;
 type FilePath = String;
-type TableId = Uuid;
+pub type TableId = Uuid;
+
+#[derive(Clone, PartialEq)]
+enum DeleteFlag
+{
+    DoDelete,
+    NoDelete
+}
+
+#[derive(Clone)]
+struct TableState
+{
+    delete_flag: DeleteFlag,
+    n_queries_operating_on_table: u16
+}
+
+impl TableState
+{
+    fn new() -> TableState
+    {
+        TableState { 
+            delete_flag: DeleteFlag::NoDelete, 
+            n_queries_operating_on_table: 0
+        }
+    }
+
+    fn new_map(
+        tables_metadata: &HashMap<TableId, TableMetadata>
+    ) -> HashMap<TableId, TableState>
+    {
+        let mut tables_state: HashMap<TableId, TableState> = HashMap::new();
+        for (table_id, _) in tables_metadata
+        {
+            tables_state.insert(*table_id, TableState { 
+                delete_flag: DeleteFlag::NoDelete, n_queries_operating_on_table: 0
+            });
+        }
+        tables_state
+    }
+}
 
 // ####################################################
 // DBMETADATA SHOULD BE CRITICAL SECTION - i.e. RwLock?
@@ -40,6 +79,8 @@ pub struct DbMetadata
     db_data_dir_path: String, 
     #[serde(skip)]
     metadata_file_path: String,
+    #[serde(skip)]
+    tables_states: HashMap<TableId, TableState>,
 }
 
 impl DbMetadata  
@@ -59,11 +100,13 @@ impl DbMetadata
             data_dir_path
         )?;
 
+        let tables_states = TableState::new_map(&table_map);
         let mut db_meta = DbMetadata {
             table_count: table_count,
             tables_metadata: table_map,
-            metadata_file_path: String::from(metadata_file_path),
             db_data_dir_path: String::from(data_dir_path),
+            metadata_file_path: String::from(metadata_file_path),
+            tables_states: tables_states
         };
 
         // For each column we create a filepath: DB_DIR/table_name/col_name_0
@@ -120,7 +163,10 @@ impl DbMetadata
                                 .or_else(|e| 
                                     return Err(DbError::IoError(e.into()))
                                 )?;
+        let tables_state = TableState::new_map(&metadata.tables_metadata);
+
         metadata.metadata_file_path = String::from(metadata_path);
+        metadata.tables_states = tables_state;
 
         is_metadata_ok(
             metadata.table_count, 
@@ -138,7 +184,19 @@ impl DbMetadata
 
         for (t_id, t_meta) in &self.tables_metadata
         {
-            tables.push(ShallowTable::new(t_id, &t_meta.table_name));
+            // If everything works correctly, we should have the same table_ids
+            // in tables_states AND in tables_metadata
+            let state = self.tables_states
+                            .get(t_id)
+                            .expect(&format!("DbMetadata::get_tables: Our DB somehow ended up in INVALID STATE, tables_states doesn't have id: '{}', while tables_metadata has such id", t_id));
+            
+            match state.delete_flag
+            {
+                DeleteFlag::NoDelete => tables.push(
+                                    ShallowTable::new(t_id, &t_meta.table_name)
+                                ),
+                _ => ()
+            }
         }
 
         tables
@@ -151,9 +209,15 @@ impl DbMetadata
     {
         if let Some(tab_meta) = self.tables_metadata.get(table_id)
         {
-            return Ok(tab_meta.into_table_schema());
+            let state = self.tables_states
+                            .get(table_id)
+                            .expect(&format!("DbMetadata::get_table_details: Our DB somehow ended up in INVALID STATE, tables_states doesn't have id: '{}', while tables_metadata has such id", table_id));
+            match state.delete_flag
+            {
+                DeleteFlag::NoDelete => return Ok(tab_meta.into_table_schema()),
+                DeleteFlag::DoDelete => return Err(DbError::NotFound(format!("Table with id: {}, not found in db.", table_id)))
+            }
         }
-
         Err(DbError::NotFound(format!("Table with id: {}, not found in db.", table_id)))
     }
 
@@ -166,6 +230,9 @@ impl DbMetadata
     {
         let table_id = TableId::new_v4();
 
+        // TODO: add hashmap that stores table_name: table_id so that we can
+        // quickly check if table_name exists in db (since task description 
+        // requires tables to have unique names)
         if self.tables_metadata.contains_key(&table_id)
         {
             return Err(DbError::Other(format!("DbMetadata::add_new_table: map contains given table_id: '{}', Uuid::new gave the same id", table_id)));
@@ -185,6 +252,7 @@ impl DbMetadata
             table_name: String::from(table_schema.name()),
             columns: columns
         });
+        self.tables_states.insert(table_id, TableState::new());
         self.table_count += 1;
 
         Ok(table_id)
@@ -497,6 +565,10 @@ fn table_schema_into_columns_map(
                     msg: msg, 
                     name: col_name
                     });
+        }
+        if col_map.contains_key(&col_name)
+        {
+            return Err(DbError::InvalidColumnName { msg: format!("Provided table doesn't have UNIQUE column names, creating table ABORTED"), name: col_name });
         }
 
         let file_path = create_file_path(

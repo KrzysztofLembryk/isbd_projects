@@ -2,7 +2,6 @@ use crate::schemas::column::{DataColumn};
 use uuid::Uuid;
 use serde;
 use serde::ser::Serialize;
-use serde::de::Deserialize;
 
 #[derive(Clone, Copy, serde::Serialize)]
 pub enum QueryStatus

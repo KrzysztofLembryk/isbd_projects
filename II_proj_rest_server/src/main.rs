@@ -1,4 +1,4 @@
-use II_proj_rest_server::db::storage::metadata_structs::DbMetadata;
+use II_proj_rest_server::db::storage::metadata::DbMetadata;
 use II_proj_rest_server::routes::tables::{get_tables, get_table_details, put_table, delete_table};
 use II_proj_rest_server::routes::queries::{get_queries, get_query_info, post_query};
 use II_proj_rest_server::db::constants::{DB_DATA_DIR};
@@ -33,6 +33,7 @@ async fn main() -> std::io::Result<()>
 
     db_manager.init_db().await.unwrap();
 
+    // TODO: This should be inside db_manager init
     let metadata_saver_task_handle = tokio::spawn(async move {
             loop  
             {

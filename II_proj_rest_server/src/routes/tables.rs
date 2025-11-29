@@ -1,7 +1,7 @@
 use actix_web::{HttpResponse, Responder, delete, get, put, web};
 use crate::db::db_manager::{DbManager};
 use crate::db::errors::DbError;
-use crate::db::storage::metadata_structs::DbMetadata;
+use crate::db::storage::metadata::DbMetadata;
 use crate::schemas::table::{ShallowTable, TableSchema};
 use crate::schemas::column::{Column};
 use crate::schemas::error::{Error, Problem};
@@ -58,6 +58,16 @@ async fn get_table_details(
 #[delete("/table/{table_id}")]
 async fn delete_table(table_id: web::Path<String>) -> impl Responder
 {
+    // We will get write for db_manager, firstly we will set flag that this 
+    // table is to be deleted, so that UPCOMING tables/queries requests will 
+    // not be able to see and operate on this table
+    // We will have hashmap - 
+    //  {
+    //      table_name/id: (delete_flag, n_queries_operating_on_table)
+    //  }
+    // For every query we will spawn task, that will communicate with db_manager
+    // via channels, 
+    // We will spawn another TASK before running server
     println!("Fetching table with id: {}", table_id);
 
     if random::<bool>()
