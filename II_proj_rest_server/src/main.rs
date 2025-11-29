@@ -1,8 +1,11 @@
+use II_proj_rest_server::db::storage::metadata_structs::DbMetadata;
 use II_proj_rest_server::routes::tables::{get_tables, get_table_details, put_table, delete_table};
 use II_proj_rest_server::routes::queries::{get_queries, get_query_info, post_query};
 use II_proj_rest_server::db::constants::{DB_DATA_DIR};
 use actix_web::{App, HttpServer, web};
-use II_proj_rest_server::db::db_manager::DbManager;
+use II_proj_rest_server::db::db_manager::{DbManager, TaskMessage};
+
+use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()>
@@ -25,12 +28,30 @@ async fn main() -> std::io::Result<()>
     //      - Arc - since we want to be able to share db_manager between Actix 
     //              threads
 
-    let mut db_manager = DbManager::new(DB_DATA_DIR);
+    let (tx_msg, mut rx_msg) = unbounded_channel::<TaskMessage>();
+    let mut db_manager = DbManager::new(DB_DATA_DIR, tx_msg.clone());
     db_manager.init_db().await.unwrap();
+
+
+    let metadata_saver_task_handle = tokio::spawn(async move {
+            loop  
+            {
+                match rx_msg.recv().await
+                {
+                    Some(TaskMessage::Shutdown) => {break;},
+                    Some(TaskMessage::SaveMetadata(meta)) => {
+                        DbMetadata::save_snapshot_to_file(meta).await.unwrap()
+                    },
+                    None => {break;}
+                }
+            }
+        }
+    );                    
 
     // Internally, web::Data uses Arc
     // --> So we have Arc<RwLock<DbManager>>
     let safe_manager = web::Data::new(tokio::sync::RwLock::new(db_manager));
+    let manager_clone = safe_manager.clone();
 
     HttpServer::new(move || {
         App::new()
@@ -45,5 +66,18 @@ async fn main() -> std::io::Result<()>
     })
     .bind(("127.0.0.1", 8080))?
     .run()
-    .await
+    .await?;
+
+
+    // After Httpserver ends its execution, we save metadata
+    let manager = manager_clone.read().await;
+
+    tx_msg.send(TaskMessage::SaveMetadata(
+        manager.metadata_clone().unwrap())
+    ).unwrap();
+    tx_msg.send(TaskMessage::Shutdown).unwrap();
+
+    metadata_saver_task_handle.await?;
+
+    Ok(())
 }

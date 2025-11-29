@@ -18,7 +18,7 @@ use crate::schemas::column::{Column};
 mod test_column_structs;
 
 type TableName = String;
-type ColumnName = String;
+pub type ColumnName = String;
 type FilePath = String;
 type TableId = Uuid;
 
@@ -91,11 +91,32 @@ impl DbMetadata
 
     /// We do not encode metadata when saving to file.
     /// When saving we overwrite whole previous metadata file
-    /// Maybe we should change save_to_file to get COPY of DbMetadata so that
-    /// we will not block mutex while saving to file????
-    pub async fn save_to_file(metadata: DbMetadata) -> Result<(), DbError>
+    /// This method is run when server ends its execution.
+    pub async fn save_to_file(&self) -> Result<(), DbError>
     {
-        let mut f = t_fs::File::create(metadata.metadata_file_path.clone()).await?;
+        let mut f = t_fs::File::create(&self.metadata_file_path).await?;
+        let buf = serde_json::to_vec(&self)
+                            .or_else(|e| 
+                                return Err(DbError::Other(e.to_string()))
+                            )?;
+
+        f.write_all(&buf[..]).await?;
+        f.flush().await?;
+
+        Ok(())
+    }
+
+    /// Saves a snapshot of cloned metadata to file.
+    /// This method is run every time that given number of tables is changed
+    pub async fn save_snapshot_to_file(
+        metadata: DbMetadata
+    ) -> Result<(), DbError>
+    {
+        // ?? IS THIS A RACE CONDITION ??
+        // If we start saving to file, and immediately afterthat we got enough
+        // changes to metadata, and other thread starts writing to file, won't
+        // we have undefined 
+        let mut f = t_fs::File::create(&metadata.metadata_file_path).await?;
         let buf = serde_json::to_vec(&metadata)
                             .or_else(|e| 
                                 return Err(DbError::Other(e.to_string()))
@@ -159,50 +180,32 @@ impl DbMetadata
     }
 
     /// Function receives TableSchema and adds table with its columns to 
-    /// metadata structure, it also **creates dirs and files** for this table
+    /// metadata structure, it **DOESN't create** dirs and files
     pub async fn put_table(
         &mut self, 
         table_schema: &TableSchema
     ) -> Result<TableId, DbError>
     {
         let table_id = TableId::new_v4();
-        let table_name = table_schema.name();
-        let columns = table_schema.columns();
-        let mut cols_metadata_map: HashMap<ColumnName, ColMetadata> = HashMap::new();
-        let table_dir_path = create_dir_path(
-            &self.db_data_dir_path, 
-            &table_id, 
-            table_name
-        );
 
         if self.tables_metadata.contains_key(&table_id)
         {
             return Err(DbError::Other(format!("DbMetadata::add_new_table: map contains given table_id: '{}', Uuid::new gave the same id", table_id)));
         }
 
-        // TODO: separate populating col_map from creating files and dirs!!!!!
-        // 1. Firstly we populate col map
-        // 2. And only then, if populating was correct we create dirs and files
-        // !!!! Maybe we just should ignore creating dirs here, and these dirs
-        // will be created only when sb wants to add data!!
-        self.create_dirs_if_not_exist(
-            &table_dir_path
-        ).await?;
-        self.populate_col_map_and_create_col_files(
-            columns, 
-            &mut cols_metadata_map, 
-            &table_dir_path, 
+        let columns = table_schema_into_columns_map(
+            &table_schema, 
             &table_id, 
-            table_name
-        ).await?;
+            &self.db_data_dir_path,
+        )?;
 
         // Only if we successfully populate columns metadata we insert new table
         // to our metadata object
         self.tables_metadata.insert(
             table_id, 
             TableMetadata {
-            table_name: String::from(table_name),
-            columns: cols_metadata_map
+            table_name: String::from(table_schema.name()),
+            columns: columns
         });
         self.table_count += 1;
 
@@ -216,62 +219,6 @@ impl DbMetadata
     // ###################################################################### 
     // ##################### FILE HANDLING FUNCTIONS ########################
     // ###################################################################### 
-
-    async fn populate_col_map_and_create_col_files(
-        &self,
-        columns: &Vec<Column>,
-        col_map: &mut HashMap<ColumnName, ColMetadata>,
-        table_dir_path: &str,
-        table_id: &TableId,
-        table_name: &str
-    ) -> Result<(), DbError>
-    {
-        // TODO: separate populating col_map from creating files and dirs!!!!!
-        let file_idx = 0;
-
-        // If we have duplicate col_names we will just overwrite previously added column
-        for col in columns
-        {
-            let col_name = String::from(col.c_name());
-
-            if !col_name.is_ascii()
-            {
-                let msg = format!("DbManager::put_table - provided table has column: '{}', that has non ASCII characters, creating table ABORTED", col_name);
-
-                return match self.delete_dir_with_contents(table_dir_path).await
-                {
-                    Ok(_) => Err(DbError::InvalidColumnName{
-                        msg: msg, 
-                        name: col_name
-                        }),
-                    Err(e) => Err(DbError::Other(
-                        format!("{} AND Error: {}", msg, e)
-                    ))
-                };
-            }
-
-            let file_path = create_file_path(
-                &self.db_data_dir_path, 
-                table_id, 
-                table_name, 
-                &col_name, 
-                file_idx
-            );
-            self.create_file(&file_path).await?;
-
-            col_map.insert(
-                col_name.clone(), 
-                ColMetadata { 
-                    c_name: col_name.clone(), 
-                    c_type: col.c_type(), 
-                    c_files:  vec![
-                            file_path   
-                        ]
-                }
-            );
-        }
-        Ok(())
-    }
 
     /// Function creates given directory, and its parents if they don't exist.
     /// <br> Function expects dir_path to be: **DB_DATA_DIR/table_name**
@@ -547,4 +494,52 @@ fn create_dir_path(
 ) -> String
 {
     format!("{db_data_dir_path}/{table_id}_{table_name}")
+}
+
+
+// TODO: probably we should make this not a function, but TableSchema method !!!
+fn table_schema_into_columns_map(
+    schema: &TableSchema, 
+    table_id: &Uuid,
+    db_data_dir_path: &str,
+) -> Result<HashMap<ColumnName, ColMetadata>, DbError>
+{
+    let file_idx = 0;
+    let mut col_map: HashMap<ColumnName, ColMetadata> = HashMap::new();
+
+    // If we have duplicate col_names we will just overwrite previously added column
+    for col in schema.columns()
+    {
+        let col_name = String::from(col.c_name());
+
+        if !col_name.is_ascii()
+        {
+            let msg = format!("DbManager::put_table::table_schema_into_col_metadata - provided table has column: '{}', that has non ASCII characters, creating table ABORTED", col_name);
+
+            return Err(DbError::InvalidColumnName{
+                    msg: msg, 
+                    name: col_name
+                    });
+        }
+
+        let file_path = create_file_path(
+            db_data_dir_path, 
+            table_id, 
+            schema.name(),
+            &col_name, 
+            file_idx
+        );
+
+        col_map.insert(
+            col_name.clone(), 
+            ColMetadata { 
+                c_name: col_name.clone(), 
+                c_type: col.c_type(), 
+                c_files:  vec![
+                        file_path   
+                    ]
+            }
+        );
+    }
+    Ok(col_map)
 }

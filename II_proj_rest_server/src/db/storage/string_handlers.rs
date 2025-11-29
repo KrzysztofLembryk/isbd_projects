@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{Write};
 use regex::Regex;
 
-use crate::db::constants::{MAX_COL_NAME_LEN, MAX_DATA_STR_LEN};
+use crate::db::constants::{MAX_COL_NAME_LEN, MAX_STR_DATA_LEN};
 use crate::db::errors::{DbError};
 
 #[derive(PartialEq)]
@@ -94,11 +94,11 @@ pub fn read_string_from_buf(
             );
         }
         else if len_check_type == StrLenCheckType::DataLenCheck
-            && res_str.len() > MAX_DATA_STR_LEN
+            && res_str.len() > MAX_STR_DATA_LEN
         {
             return Err(DbError::SizeExceeded{
                 msg: format!("read_string_from_buf: res_str"), 
-                max: MAX_DATA_STR_LEN
+                max: MAX_STR_DATA_LEN
             });
         }
 

@@ -3,7 +3,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::io::{Write};
 use zstd;
 
-use crate::db::constants::{LogicalColType, BATCH_SIZE, CHUNK_SIZE_BYTES, DB_DATA_DIR, ZSTD_ENCODE_LEVEL};
+use crate::db::constants::{LogicalColType, BATCH_SIZE, BUF_SIZE, DB_DATA_DIR, ZSTD_ENCODE_LEVEL};
 use crate::db::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle_decode_i, vle_decode_u};
 
 // TODO: metadata should be updated when we save to file
@@ -93,7 +93,7 @@ impl<T: ColType> ColData<T>
         bytes_read: &mut usize,
         size_read: &mut usize,
         header: &mut ColHeader,
-        buf: &mut [u8; CHUNK_SIZE_BYTES],    
+        buf: &mut [u8; BUF_SIZE],    
         f: &mut File
     ) -> Result<bool, DbError>
     {
@@ -196,7 +196,7 @@ impl<T: ColType> ColData<T>
         mut f: File,
     ) -> Result<File, DbError>
     {
-        let mut buf = [0u8; CHUNK_SIZE_BYTES];
+        let mut buf = [0u8; BUF_SIZE];
         let mut buf_idx = 0;
 
         // TODO: Probably we could use slicing and just jump CHUNK_SIZE_BYTES in
@@ -206,13 +206,13 @@ impl<T: ColType> ColData<T>
             let buf_val = buf
                 .get_mut(buf_idx)
                 .ok_or_else(|| DbError::Other(
-                    format!("ColData::_do_the_save - buf_idx {} out of bounds for buffer (len: {})", buf_idx, CHUNK_SIZE_BYTES)))?;
+                    format!("ColData::_do_the_save - buf_idx {} out of bounds for buffer (len: {})", buf_idx, BUF_SIZE)))?;
 
             *buf_val = *c;
             buf_idx += 1;
 
             // only when full buff we save chunk
-            if buf_idx >= CHUNK_SIZE_BYTES
+            if buf_idx >= BUF_SIZE
             {
                 let bytes_read = buf_idx;
 
@@ -245,7 +245,7 @@ impl<T: ColType> ColData<T>
         col_h: &mut ColHeader, 
         buf_idx: &mut usize,
         bytes_read: &mut usize,
-        buf: &mut [u8; CHUNK_SIZE_BYTES],
+        buf: &mut [u8; BUF_SIZE],
     ) -> Result<File, DbError>
     {
         let mut f = File::open(col_h.get_next_file_path()?)?;
@@ -294,7 +294,7 @@ impl ColData<i64>
     pub fn read_from_file(mut f: File) -> Result<ColData<i64>, DbError>
     {
         // TODO: ADD PROPER ERROR HANDLIIIING with my-defined Errors
-        let mut buf = [0 as u8; CHUNK_SIZE_BYTES];
+        let mut buf = [0 as u8; BUF_SIZE];
         let mut bytes_read;
         let mut buf_idx = 0;
 
@@ -470,7 +470,7 @@ impl ColData<String>
     pub fn read_from_file(mut f: File) -> Result<ColData<String>, DbError>
     {
         // TODO: ADD PROPER ERROR HANDLIIIING with my-defined Errors
-        let mut buf = [0 as u8; CHUNK_SIZE_BYTES];
+        let mut buf = [0 as u8; BUF_SIZE];
         let mut bytes_read;
         let mut buf_idx = 0;
 
@@ -658,7 +658,7 @@ impl ColData<String>
                 format!("ColData<String>::_zstd_encode - zstd compression failed: {}", e)
             ))?;
         
-        // We save and read CHUNK_SIZE bytes, thus we may not save whole 
+        // We save and read BUF_SIZE bytes, thus we may not save whole 
         // compressed data in one go and in one file, or we may not read whole
         // zstd encoded frame, thus we need to store compressed data size + data
         // cause otherwise we will not be able to decompress correctly our data

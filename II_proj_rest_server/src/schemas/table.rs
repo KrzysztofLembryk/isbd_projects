@@ -1,8 +1,8 @@
 use crate::schemas::column::{Column};
 use serde;
 use uuid::Uuid;
-use std::fmt;
-use validator::{Validate, ValidationError};
+use std::{fmt};
+use validator::{Validate}; //ValidationError
 
 #[derive(serde::Serialize, serde::Deserialize, Validate)]
 pub struct TableSchema
@@ -42,6 +42,7 @@ impl TableSchema
     {
         &self.columns
     }
+
 }
 
 #[derive(serde::Serialize)]

@@ -15,6 +15,7 @@ pub enum DbError {
     DecompressionError(String),
     UnsupportedType(String),
     NotFound(String),
+    InternalDbError(String),
     Other(String),
 }
 
@@ -34,6 +35,7 @@ impl fmt::Display for DbError {
             DbError::DecompressionError(msg) => write!(f, "Decompression error: {}", msg),
             DbError::UnsupportedType(msg) => write!(f, "Unsupported type: {}", msg),
             DbError::NotFound(msg) => write!(f, "Not found: {}", msg),
+            DbError::InternalDbError(msg) => write!(f, "Internal Db error: {}", msg),
             DbError::Other(msg) => write!(f, "Error: {}", msg),
         }
     }

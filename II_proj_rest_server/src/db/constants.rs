@@ -3,33 +3,43 @@ use std::fmt;
 
 const MB_1: usize = 1024 * 1024;
 
-pub const MAGIC_WORD: u32 = 0xF1FAA;
+// ############################################################################
+// ############################ BUFFER SIZES ##################################
+// ############################################################################
 
+/// Size of buffer we read data into
+pub const BUF_SIZE: usize = 64 * MB_1; 
+/// Number of rows we want to read in one go
+pub const BATCH_SIZE: usize = 10; 
+
+// ############################################################################
+// ########################### FILES CONSTANTS ################################
+// ############################################################################
 pub const FILE_PATH_REGEX: &str = r"^[a-zA-Z./][a-zA-Z0-9_./]*$";
 pub const METADATA_FILE_PATH: &str = "./db_metadata";
 pub const DB_DATA_DIR: &str = "./db_data";
 
-pub const ZSTD_ENCODE_LEVEL: i32 = 3;
+
+// ############################################################################
+// ########################## MAX ALLOWED SIZES ################################
+// ############################################################################
 pub const NULL_TERMINATOR_SIZE: usize = 1;
 pub const COLUMN_HEADER_METADATA_SIZE: usize = 12;
 
-// pub const MAX_COL_NAME_LEN: usize = 255; 
-pub const MAX_COL_NAME_LEN: usize = 50; 
+pub const MAX_COL_NAME_LEN: usize = 255; 
 pub const MAX_COL_COUNT: usize = u16::MAX as usize;
+pub const MAX_STR_DATA_LEN: usize = MB_1;
+pub const MAX_FILE_SIZE: u32 = u32::MAX 
+    - MAX_COL_NAME_LEN as u32 
+    - NULL_TERMINATOR_SIZE as u32 
+    - COLUMN_HEADER_METADATA_SIZE as u32;
 
-// This needs to be of such size, so that BATCH_SIZE * MAX_DATA_STR_LEN
-// can be stored in-memory
-pub const MAX_DATA_STR_LEN: usize = 8 * MB_1;
-
-// pub const MAX_FILE_SIZE: u32 = u32::MAX - MAX_COL_NAME_LEN as u32 - NULL_TERMINATOR_SIZE as u32 - COLUMN_HEADER_METADATA_SIZE as u32;
-pub const MAX_FILE_SIZE: u32 = 100;
-
-// buff size we read data into, needs to be at least MAX_COL_NAME_LEN bytes
-// pub const CHUNK_SIZE_BYTES: usize = MAX_COL_NAME_LEN + 255; 
-pub const CHUNK_SIZE_BYTES: usize = 50;
-
-// number of rows we want to read in one go
-pub const BATCH_SIZE: usize = 10; 
+pub const MAX_ALLOWED_METADATA_CHANGES: u16 = 10;
+// ############################################################################
+// ############################ OTHER CONSTANTS ################################
+// ############################################################################
+pub const ZSTD_ENCODE_LEVEL: i32 = 3;
+pub const MAGIC_WORD: u32 = 0xF1FAA;
 
 use crate::db::errors::DbError;
 

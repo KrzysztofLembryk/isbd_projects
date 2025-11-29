@@ -1,5 +1,7 @@
 use actix_web::{HttpResponse, Responder, delete, get, put, web};
-use crate::db::db_manager::{self, DbManager};
+use crate::db::db_manager::{DbManager};
+use crate::db::errors::DbError;
+use crate::db::storage::metadata_structs::DbMetadata;
 use crate::schemas::table::{ShallowTable, TableSchema};
 use crate::schemas::column::{Column};
 use crate::schemas::error::{Error, Problem};
@@ -84,8 +86,16 @@ async fn put_table(
     return match result
     {
         Ok(table_id) => HttpResponse::Ok().body(table_id.to_string()),
-        Err(e) => HttpResponse::BadRequest().json(
-            Error::new(&format!("{}", e))
-        )
+        Err(e) => {
+            match e
+            {
+                DbError::InternalDbError(e) => 
+                    HttpResponse::InternalServerError()
+                        .json(Error::new(&format!("{}", e))),
+                e => 
+                    HttpResponse::BadRequest()
+                        .json(Error::new(&format!("{}", e)))
+            }
+        }
     };
 }
