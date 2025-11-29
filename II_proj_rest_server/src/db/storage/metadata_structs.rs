@@ -105,28 +105,6 @@ impl DbMetadata
 
         Ok(())
     }
-
-    /// Saves a snapshot of cloned metadata to file.
-    /// This method is run every time that given number of tables is changed
-    pub async fn save_snapshot_to_file(
-        metadata: DbMetadata
-    ) -> Result<(), DbError>
-    {
-        // ?? IS THIS A RACE CONDITION ??
-        // If we start saving to file, and immediately afterthat we got enough
-        // changes to metadata, and other thread starts writing to file, won't
-        // we have undefined 
-        let mut f = t_fs::File::create(&metadata.metadata_file_path).await?;
-        let buf = serde_json::to_vec(&metadata)
-                            .or_else(|e| 
-                                return Err(DbError::Other(e.to_string()))
-                            )?;
-
-        f.write_all(&buf[..]).await?;
-        f.flush().await?;
-
-        Ok(())
-    }
     
     pub async fn read_from_file(
         metadata_path: &str, 
@@ -375,7 +353,6 @@ impl TableMetadata
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct ColMetadata
 {
-    // table_name: TableName, // ???
     c_name: ColumnName,
     c_type: LogicalColType,
     c_files: Vec<FilePath>

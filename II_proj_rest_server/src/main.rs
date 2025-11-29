@@ -40,7 +40,7 @@ async fn main() -> std::io::Result<()>
                 {
                     Some(TaskMessage::Shutdown) => {break;},
                     Some(TaskMessage::SaveMetadata(meta)) => {
-                        DbMetadata::save_snapshot_to_file(meta).await.unwrap()
+                        meta.save_to_file().await.unwrap();
                     },
                     None => {break;}
                 }
