@@ -30,8 +30,8 @@ async fn main() -> std::io::Result<()>
 
     let (tx_msg, mut rx_msg) = unbounded_channel::<TaskMessage>();
     let mut db_manager = DbManager::new(DB_DATA_DIR, tx_msg.clone());
-    db_manager.init_db().await.unwrap();
 
+    db_manager.init_db().await.unwrap();
 
     let metadata_saver_task_handle = tokio::spawn(async move {
             loop  
@@ -50,12 +50,12 @@ async fn main() -> std::io::Result<()>
 
     // Internally, web::Data uses Arc
     // --> So we have Arc<RwLock<DbManager>>
-    let safe_manager = web::Data::new(tokio::sync::RwLock::new(db_manager));
-    let manager_clone = safe_manager.clone();
+    let db_manager = web::Data::new(tokio::sync::RwLock::new(db_manager));
+    let manager_clone = db_manager.clone();
 
     HttpServer::new(move || {
         App::new()
-            .app_data(safe_manager.clone())
+            .app_data(db_manager.clone())
             .service(get_tables)
             .service(get_table_details)
             .service(delete_table)
@@ -69,14 +69,14 @@ async fn main() -> std::io::Result<()>
     .await?;
 
 
-    // After Httpserver ends its execution, we save metadata
-    let manager = manager_clone.read().await;
+    // After Httpserver ends its execution, we acquire lock and tell 
+    // MetadataSaverTask to save metadata 
+    let db_manager = manager_clone.read().await;
 
-    tx_msg.send(TaskMessage::SaveMetadata(
-        manager.metadata_clone().unwrap())
-    ).unwrap();
-    tx_msg.send(TaskMessage::Shutdown).unwrap();
+    db_manager.save_metadata().unwrap();
+    db_manager.shutdown().unwrap();
 
+    // Need to wait for MetadataSaverTask to end its execution
     metadata_saver_task_handle.await?;
 
     Ok(())

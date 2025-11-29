@@ -94,55 +94,53 @@ impl DbManager
         schema: &TableSchema
     ) -> Result<Uuid, DbError> 
     {
-        if let Some(meta) = &mut self.db_meta
+        let db_meta_clone: DbMetadata;
+        let table_id: Uuid;
+
+        // Scope needed so that we DROP MUTABLE REF to db_meta, to be able to 
+        // use self.send_task_msg
         {
-            return match meta.put_table(schema).await
-            {
-                Ok(table_id) =>{
-                    self.n_meta_changes += 1;
-                    if self.n_meta_changes >= MAX_ALLOWED_METADATA_CHANGES
-                    {
-                        self.n_meta_changes = 0;
-                        // TODO: we probably should use here save_metadata func
-                        // If enough changes to metadata we save current metadata by sending msg to SaverTask
-                        match self
-                            .tx_metadata_saver
-                            .send(TaskMessage::SaveMetadata(meta.clone()))
-                        {
-                            Ok(_) => Ok(table_id),
-                            Err(e) => Err(DbError::InternalDbError(format!("DbManager::put_table: {}", e)))
-                        }
-                    }
-                    else 
-                    {
-                        Ok(table_id)
-                    }
-                },
-                Err(e) => Err(e)
-            };
+            let db_meta = self.db_meta
+                    .as_mut()
+                    .ok_or_else(|| DbError::NotFound("DbManager::put_table: database was not initialized".to_string()
+            ))?;
+            table_id = db_meta.put_table(schema).await?;
+            db_meta_clone = db_meta.clone();
+        }
+
+        self.n_meta_changes += 1;
+
+        if self.n_meta_changes >= MAX_ALLOWED_METADATA_CHANGES
+        {
+            self.n_meta_changes = 0;
+            self.send_task_msg(TaskMessage::SaveMetadata(db_meta_clone))?;
+        }
+        Ok(table_id)
+    }
+
+    pub fn save_metadata(&self) -> Result<(), DbError>
+    {
+        if let Some(meta) = &self.db_meta
+        {
+            self.send_task_msg(TaskMessage::SaveMetadata(meta.clone()))?;
+            return Ok(());
         }
 
         Err(DbError::NotFound(format!("DbManager::put_table: database was not initialized")))
     }
 
-    pub async fn save_metadata(&self) -> Result<(), DbError>
+    pub fn shutdown(&self) -> Result<(), DbError>
     {
-        if let Some(meta) = &self.db_meta
-        {
-            return meta.save_to_file().await;
-        }
-
-        Err(DbError::NotFound(format!("DbManager::put_table: database was not initialized")))
+        self.send_task_msg(TaskMessage::Shutdown)
     }
 
-    pub fn metadata_clone(&self) -> Result<DbMetadata, DbError>
+    fn send_task_msg(&self, msg: TaskMessage) -> Result<(), DbError> 
     {
-        if let Some(meta) = &self.db_meta
-        {
-            return Ok(meta.clone());
-        }
-
-        Err(DbError::NotFound(format!("DbManager::put_table: database was not initialized")))
+        self.tx_metadata_saver
+            .send(msg)
+            .map_err(|e| DbError::InternalDbError(
+                format!("DbManager::put_table: failed to send save message: {}", e)
+            ))
     }
     // Currently naive implementation just to create some files for our db <br>
     // !!!!!!!! <br> 
