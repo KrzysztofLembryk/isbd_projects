@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::fs::{self, File};
 use std::path::Path;
-use std::io::{Read};
 use std::vec;
 use regex::Regex;
 use serde;
@@ -11,9 +9,13 @@ use uuid::Uuid;
 use tokio::fs as t_fs;
 
 use crate::db::errors::{DbError};
-use crate::db::constants::{DB_DATA_DIR, MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX};
+use crate::db::constants::{MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::schemas::column::{Column};
+
+#[cfg(test)]
+#[path = "../tests/test_metadata_structs.rs"]
+mod test_column_structs;
 
 type TableName = String;
 type ColumnName = String;
@@ -30,38 +32,61 @@ pub struct DbMetadata
     /// Each table has its own directory: 'table_name/'
     /// Thus we cannot have two tables with the same name.
     /// -- table_count: variable that remembers how many tables in db we have
-    /// -- table_cols: hash map in which for given table_name we store all its
-    ///                columns metadata
+    /// -- tables_metadata: hash map in which for given table_id we store all 
+    ///                     its columns metadata
+    /// -- db_data_dir_path: path to dir in which we store all database folders
     table_count: u16,
-    table_map: HashMap<TableId, TableMetadata>,
+    tables_metadata: HashMap<TableId, TableMetadata>,
+    db_data_dir_path: String, 
     #[serde(skip)]
-    metadata_file_path: String
+    metadata_file_path: String,
 }
 
 impl DbMetadata  
 {
-    pub fn new(
+    fn new(
         table_count: u16,
-        mut table_map: HashMap<TableId, TableMetadata>,
-        metadata_file_path: &str
+        table_map: HashMap<TableId, TableMetadata>,
+        metadata_file_path: &str,
+        data_dir_path: &str,
     ) -> Result<DbMetadata, DbError>
     {
-        check_metadata_correctness(table_count, &table_map, metadata_file_path)?;
-        // For each column we create a filepath: DB_DIR/table_name/col_name_0
-        create_filepaths_for_all_columns(&mut table_map)?;
+        // TODO: add better checking if path is correct
+        is_metadata_ok(
+            table_count, 
+            &table_map, 
+            metadata_file_path,
+            data_dir_path
+        )?;
 
-        Ok(DbMetadata {
+        let mut db_meta = DbMetadata {
             table_count: table_count,
-            table_map,
-            metadata_file_path: String::from(metadata_file_path)
-        })
+            tables_metadata: table_map,
+            metadata_file_path: String::from(metadata_file_path),
+            db_data_dir_path: String::from(data_dir_path),
+        };
+
+        // For each column we create a filepath: DB_DIR/table_name/col_name_0
+        // Not FILE, file will be created when adding new data
+        db_meta.create_filepaths_for_all_columns()?;
+
+        Ok(db_meta)
     }
 
-    pub fn new_empty(metadata_file_path: &str) -> Result<DbMetadata, DbError>
+    pub fn new_empty(
+        metadata_file_path: &str, 
+        data_dir_path: &str
+    ) -> Result<DbMetadata, DbError>
     {
         let table_count = 0;
         let table_map = HashMap::new();
-        DbMetadata::new(table_count, table_map, metadata_file_path)
+
+        DbMetadata::new(
+            table_count, 
+            table_map, 
+            metadata_file_path, 
+            data_dir_path
+        )
     }
 
     /// We do not encode metadata when saving to file.
@@ -82,32 +107,37 @@ impl DbMetadata
         Ok(())
     }
     
-    pub async fn read_from_file(path: &str) -> Result<DbMetadata, DbError>
+    pub async fn read_from_file(
+        metadata_path: &str, 
+    ) -> Result<DbMetadata, DbError>
     {
-        let mut f = t_fs::File::open(path).await?;
+        let mut f = t_fs::File::open(metadata_path).await?;
         let mut buf = vec![]; 
 
+        // We expect that metadata file can be read WHOLE to memory
         f.read_to_end(&mut buf).await?;
 
         let mut metadata: DbMetadata = serde_json::from_slice(&buf[..])
                                 .or_else(|e| 
                                     return Err(DbError::IoError(e.into()))
                                 )?;
-        metadata.metadata_file_path = String::from(path);
+        metadata.metadata_file_path = String::from(metadata_path);
 
-        check_metadata_correctness(
+        is_metadata_ok(
             metadata.table_count, 
-            &metadata.table_map, 
-            &metadata.metadata_file_path)?;
+            &metadata.tables_metadata, 
+            &metadata.metadata_file_path,
+            &metadata.db_data_dir_path
+        )?;
 
         Ok(metadata)
     }
 
-    pub async fn get_tables(&self) -> Vec<ShallowTable>
+    pub fn get_tables(&self) -> Vec<ShallowTable>
     {
         let mut tables: Vec<ShallowTable> = Vec::new();
 
-        for (t_id, t_meta) in &self.table_map
+        for (t_id, t_meta) in &self.tables_metadata
         {
             tables.push(ShallowTable::new(t_id, &t_meta.table_name));
         }
@@ -115,12 +145,12 @@ impl DbMetadata
         tables
     }
 
-    pub async fn get_table_details(
+    pub fn get_table_details(
         &self, 
         table_id: &Uuid
     ) -> Result<TableSchema, DbError>
     {
-        if let Some(tab_meta) = self.table_map.get(table_id)
+        if let Some(tab_meta) = self.tables_metadata.get(table_id)
         {
             return Ok(tab_meta.into_table_schema());
         }
@@ -130,7 +160,7 @@ impl DbMetadata
 
     /// Function receives TableSchema and adds table with its columns to 
     /// metadata structure, it also **creates dirs and files** for this table
-    pub async  fn put_table(
+    pub async fn put_table(
         &mut self, 
         table_schema: &TableSchema
     ) -> Result<TableId, DbError>
@@ -138,22 +168,96 @@ impl DbMetadata
         let table_id = TableId::new_v4();
         let table_name = table_schema.name();
         let columns = table_schema.columns();
-        let file_idx = 0;
-        let mut col_map: HashMap<ColumnName, ColMetadata> = HashMap::new();
+        let mut cols_metadata_map: HashMap<ColumnName, ColMetadata> = HashMap::new();
+        let table_dir_path = create_dir_path(
+            &self.db_data_dir_path, 
+            &table_id, 
+            table_name
+        );
 
-        if self.table_map.contains_key(&table_id)
+        if self.tables_metadata.contains_key(&table_id)
         {
             return Err(DbError::Other(format!("DbMetadata::add_new_table: map contains given table_id: '{}', Uuid::new gave the same id", table_id)));
         }
 
-        create_dirs_if_not_exist(&create_dir_path(&table_id, table_name)).await?;
+        // TODO: separate populating col_map from creating files and dirs!!!!!
+        // 1. Firstly we populate col map
+        // 2. And only then, if populating was correct we create dirs and files
+        // !!!! Maybe we just should ignore creating dirs here, and these dirs
+        // will be created only when sb wants to add data!!
+        self.create_dirs_if_not_exist(
+            &table_dir_path
+        ).await?;
+        self.populate_col_map_and_create_col_files(
+            columns, 
+            &mut cols_metadata_map, 
+            &table_dir_path, 
+            &table_id, 
+            table_name
+        ).await?;
 
+        // Only if we successfully populate columns metadata we insert new table
+        // to our metadata object
+        self.tables_metadata.insert(
+            table_id, 
+            TableMetadata {
+            table_name: String::from(table_name),
+            columns: cols_metadata_map
+        });
+        self.table_count += 1;
+
+        Ok(table_id)
+    }
+
+    // ###################################################################### 
+    // ############################ GETTERS #################################
+    // ###################################################################### 
+
+    // ###################################################################### 
+    // ##################### FILE HANDLING FUNCTIONS ########################
+    // ###################################################################### 
+
+    async fn populate_col_map_and_create_col_files(
+        &self,
+        columns: &Vec<Column>,
+        col_map: &mut HashMap<ColumnName, ColMetadata>,
+        table_dir_path: &str,
+        table_id: &TableId,
+        table_name: &str
+    ) -> Result<(), DbError>
+    {
+        // TODO: separate populating col_map from creating files and dirs!!!!!
+        let file_idx = 0;
+
+        // If we have duplicate col_names we will just overwrite previously added column
         for col in columns
         {
             let col_name = String::from(col.c_name());
-            let file_path = create_file_path(&table_id, &table_name, &col_name, file_idx);
 
-            create_file(&file_path).await?;
+            if !col_name.is_ascii()
+            {
+                let msg = format!("DbManager::put_table - provided table has column: '{}', that has non ASCII characters, creating table ABORTED", col_name);
+
+                return match self.delete_dir_with_contents(table_dir_path).await
+                {
+                    Ok(_) => Err(DbError::InvalidColumnName{
+                        msg: msg, 
+                        name: col_name
+                        }),
+                    Err(e) => Err(DbError::Other(
+                        format!("{} AND Error: {}", msg, e)
+                    ))
+                };
+            }
+
+            let file_path = create_file_path(
+                &self.db_data_dir_path, 
+                table_id, 
+                table_name, 
+                &col_name, 
+                file_idx
+            );
+            self.create_file(&file_path).await?;
 
             col_map.insert(
                 col_name.clone(), 
@@ -166,31 +270,144 @@ impl DbMetadata
                 }
             );
         }
-
-        self.table_map.insert(
-            table_id, 
-            TableMetadata {
-            table_name: String::from(table_name),
-            columns: col_map
-        });
-        self.table_count += 1;
-
-        Ok(table_id)
+        Ok(())
     }
 
-    // ###################################################################### 
-    // ############################ GETTERS #################################
-    // ###################################################################### 
+    /// Function creates given directory, and its parents if they don't exist.
+    /// <br> Function expects dir_path to be: **DB_DATA_DIR/table_name**
+    /// <br> Otherwise it returns error.
+    async fn create_dirs_if_not_exist(
+        &self, 
+        dir_path: &str
+    ) -> std::io::Result<()>
+    {
+        // We should get path: DB_DATA_DIR/tableId_tableName
+        // and we want to create dir: 'tableId_tableName'
+        let correct_parent = Path::new(&self.db_data_dir_path);
+        let path = Path::new(dir_path);
+
+        if let Some(parent_dir) = path.parent(){
+
+            if parent_dir != correct_parent
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("DbMetadata::create_dirs_if_not_exist - provided dir_path: {} doesnt have correct parent dir: {}", dir_path, &self.db_data_dir_path)
+                ));
+            }
+
+            // Even if parent dir does not exist yet, we create it here 
+            t_fs::create_dir_all(path).await?;
+            return Ok(())
+        }
+
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("DbMetadata::create_dirs_if_not_exist - provided dir_path: {} doesnt have parent dir: {}", dir_path, &self.db_data_dir_path)
+        ));
+    }
+
+    async fn delete_dir_with_contents(
+        &self, 
+        dir_path: &str
+    ) -> std::io::Result<()> 
+    {
+        let dir_path = Path::new(dir_path);
+
+        // Only folder with a parent can be deleted
+        if let Some(parent_dir) = dir_path.parent() 
+        {
+            // We want to ensure that we will delete only folders that have 
+            // their parent equal to DB_DATA_DIR
+            if parent_dir == Path::new(&self.db_data_dir_path)
+            {
+                t_fs::remove_dir_all(dir_path).await?;
+                return Ok(());
+            }
+        }
+
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput, 
+            format!("Provided dir path: '{:?}' does not have parent equal to: '{}'", dir_path, &self.db_data_dir_path)
+        ))
+    }
+
+    async fn create_file(&self, file_path: &str) -> std::io::Result<()>
+    {
+        // Path should be: DB_DATA_DIR/table_name/file
+        let path = Path::new(file_path);
+
+        if let Some(parent_dir) = path.parent()
+        {
+            if let Some(grandparent_dir) = parent_dir.parent()
+            {
+                if grandparent_dir != Path::new(&self.db_data_dir_path)
+                {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput, 
+                        format!("Provided file path: '{}' does not have grandparent equal to: '{}'", file_path, &self.db_data_dir_path)
+                    ));
+                }
+
+                let f = t_fs::File::create(path).await?;
+
+                // We sync file to transfer it to disk
+                f.sync_data().await?;
+
+                // We need to sync directory to ensure write happended
+                let f = t_fs::File::open(parent_dir).await?;
+
+                f.sync_data().await?;
+
+                return Ok(());
+            }
+        }
+
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput, 
+            format!("Provided file path: '{}' does not have correct ancestors: '{}'", file_path, &self.db_data_dir_path)
+        ));
+    }
+
+    /// Should be run **always after is_metadata_ok function**, since it assumes
+    /// that data it has is correct i.e. column names do not constain non-ASCII
+    /// characters
+    fn create_filepaths_for_all_columns(
+        &mut self,
+    ) -> Result<(), DbError>
+    {
+        let file_idx = 0;
+
+        for (table_id, table_meta) in &mut self.tables_metadata
+        {
+            let table_name = &table_meta.table_name;
+
+            for (col_name, col_meta) in &mut table_meta.columns
+            {
+                // At first we have only one FILE PATH (files will be created 
+                // later) for each column 
+                let file_path = create_file_path(
+                    &self.db_data_dir_path,
+                    &table_id, 
+                    table_name, 
+                    col_name, 
+                    file_idx
+                );
+
+                col_meta.c_files.push(file_path);
+            }
+        }
+        Ok(())
+    }
 
 }
-
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct TableMetadata
 {
     table_name: TableName,
     columns: HashMap<ColumnName, ColMetadata>,
-    // row_count: u32 // We should for given table remember how many rows it has
+    // row_count: u32 // TODO: Table should remember how many rows it has
 }
 
 impl TableMetadata
@@ -227,7 +444,6 @@ impl ColMetadata
             c_files: Vec::new()
         }
     }
-
 }
 
 
@@ -235,16 +451,22 @@ impl ColMetadata
 //######################### PRIVATE HELPER FUNCTIONS ###########################
 //##############################################################################
 
-fn check_metadata_correctness(
+fn is_metadata_ok(
         table_count: u16,
         table_map: &HashMap<TableId, TableMetadata>,
-        file_path: &str
+        metadata_file_path: &str,
+        data_dir_path: &str,
 ) -> Result<(), DbError>
 {
     let re = Regex::new(FILE_PATH_REGEX).unwrap();
-    if !re.is_match(&file_path) 
+    if !re.is_match(&metadata_file_path) 
     {
-        return Err(DbError::Other(format!("DbMetadata::new: file_path: '{}', does not satisfy regex: '{}'", file_path, FILE_PATH_REGEX)));
+        return Err(DbError::Other(format!("DbMetadata::new: file_path: '{}', does not satisfy regex: '{}'", metadata_file_path, FILE_PATH_REGEX)));
+    }
+
+    if !re.is_match(&metadata_file_path) 
+    {
+        return Err(DbError::Other(format!("DbMetadata::new: data_dir_path: '{}', does not satisfy regex: '{}'", data_dir_path, FILE_PATH_REGEX)));
     }
 
     if table_count as usize != table_map.len()
@@ -266,103 +488,63 @@ fn check_metadata_correctness(
             });
         }
 
-        for (col_name, _) in &table_meta.columns
-        {
-            if col_name.len() > MAX_COL_NAME_LEN
-            {
-                return Err(DbError::SizeExceeded{
-                    msg: format!("DbMetadata::new: column: '{}' length exceeds MAX_COL_NAME_LEN ", col_name),
-                    max: MAX_COL_NAME_LEN
-                });
-            }
-        }
+        are_columns_ok(&table_meta.columns, &table_meta.table_name)?;
     }
-
     Ok(())
 }
 
-async fn create_dirs_if_not_exist(file_path: &str) -> std::io::Result<()>
-{
-    let path = Path::new(file_path);
-
-    if let Some(parent_dir) = path.parent(){
-        if let Some(grandparent_dir) = parent_dir.parent(){
-            if !grandparent_dir.exists(){
-                t_fs::create_dir(grandparent_dir).await?;
-            }
-        }
-
-        if !parent_dir.exists(){
-            t_fs::create_dir_all(parent_dir).await?;
-        }
-    }
-
-    Ok(())
-}
-
-async fn create_file(file_path: &str) -> std::io::Result<()>
-{
-    let path = Path::new(file_path);
-
-    if !path.exists(){
-        let f = t_fs::File::create(path).await?;
-
-        // We sync file to transfer it to disk
-        f.sync_data().await;
-    }
-
-    // We need to sync directory to ensure write happended
-    if let Some(parent_dir) = path.parent(){
-        let dir = t_fs::File::open(parent_dir).await?;
-
-        dir.sync_data().await;
-    }
-
-    Ok(())
-}
-
-fn create_filepaths_for_all_columns(
-        table_map: &mut HashMap<TableId, TableMetadata>,
+fn are_columns_ok(
+    columns: &HashMap<ColumnName, ColMetadata>,
+    table_name: &str
 ) -> Result<(), DbError>
 {
-    for (table_id, table_meta) in table_map
+    for (col_name, col_meta) in columns
     {
-        let table_name = &table_meta.table_name;
-
-        for (col_name, col_meta) in &mut table_meta.columns
+        if col_name.len() > MAX_COL_NAME_LEN
         {
-            if *col_name != col_meta.c_name
-            {
-                return Err(DbError::Other(format!("DbMetadata::new:: name: '{}' of column in hashmap KEY, is not the same as name: '{}' of column in hashmap VALUE (ColMetadata) in table: '{}'", col_name, col_meta.c_name, table_name)));
-            }
+            return Err(DbError::SizeExceeded{
+                msg: format!("DbMetadata::new: column: '{}' length exceeds MAX_COL_NAME_LEN ", col_name),
+                max: MAX_COL_NAME_LEN
+            });
+        }
 
-            // At first we have only one file for each column, when we read
-            // enough data, we will create another one if the first is full
-            let file_idx = 0;
-            let file_path = create_file_path(&table_id, table_name, col_name, file_idx);
+        if !col_name.is_ascii()
+        {
+            return Err(DbError::InvalidColumnName { 
+                msg: format!("In table: '{}', column name has non-ASCII characters", table_name), 
+                name: String::from(col_name)
+            });
+        }
 
-            col_meta.c_files.push(file_path);
+        if *col_name != col_meta.c_name
+        {
+            return Err(DbError::InvalidColumnName { 
+                msg: format!("In table: '{}', hashMap has column name key: '{}'  but ColumnMetadata stores different column name: '{}' ", table_name, col_name, col_meta.c_name), 
+                name: String::from(col_name)
+            });
         }
     }
     Ok(())
 }
 
+/// Creates file path: {db_data_dir}/{table_id}\_{table_name}/{col_name}\_{idx}
 fn create_file_path(
+    db_data_dir_path: &str,
     table_id: &Uuid, 
     table_name: &str, 
     col_name: &str, 
     idx: usize
 ) -> String
 {
-    format!("{DB_DATA_DIR}/{table_id}_{table_name}/{col_name}_{idx}")
+    format!("{db_data_dir_path}/{table_id}_{table_name}/{col_name}_{idx}")
 }
 
+/// Creates dir path: {db_data_dir}/{table_id}\_{table_name}
 fn create_dir_path(
+    db_data_dir_path: &str,
     table_id: &Uuid, 
     table_name: &str, 
 ) -> String
 {
-    format!("{DB_DATA_DIR}/{table_id}_{table_name}")
+    format!("{db_data_dir_path}/{table_id}_{table_name}")
 }
-
-

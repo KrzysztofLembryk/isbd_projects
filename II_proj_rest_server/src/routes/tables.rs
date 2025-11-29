@@ -1,4 +1,5 @@
 use actix_web::{HttpResponse, Responder, delete, get, put, web};
+use crate::db::db_manager::{self, DbManager};
 use crate::schemas::table::{ShallowTable, TableSchema};
 use crate::schemas::column::{Column};
 use crate::schemas::error::{Error, Problem};
@@ -9,41 +10,47 @@ use rand::random;
 // https://actix.rs/docs/request/
 
 #[get("/tables")]
-async fn get_tables() -> impl Responder
+async fn get_tables(
+    db_manager: web::Data<tokio::sync::RwLock<DbManager>>
+) -> impl Responder
 {
-    if random::<bool>()
+    println!("Fetching ALL TABLES DETAILS");
+
+    let manager = db_manager.read().await;
+    let details = manager.get_tables();
+
+    drop(manager);
+
+    return match details
     {
-        return HttpResponse::InternalServerError().body("Random err occured");
-    }
-
-    let mut tables = vec![];
-
-    tables.push(ShallowTable::new(&Uuid::new_v4(), "table1"));
-    tables.push(ShallowTable::new(&Uuid::new_v4(), "table2"));
-    tables.push(ShallowTable::new(&Uuid::new_v4(), "table3"));
-
-    HttpResponse::Ok().json(tables)
+        Ok(tables) => HttpResponse::Ok().json(tables),
+        Err(e) => HttpResponse::NotFound().json(
+            Error::new(&format!("{}", e))
+        )
+    };
 }
 
 #[get("/table/{table_id}")]
-async fn get_table_details(table_id: web::Path<String>) -> impl Responder
+async fn get_table_details(
+    table_id: web::Path<Uuid>, 
+    db_manager: web::Data<tokio::sync::RwLock<DbManager>>
+) -> impl Responder
 {
-    println!("Fetching table with id: {}", table_id);
+    println!("Fetching DETAILS for table with id: {}", table_id);
 
-    if random::<bool>()
+    let manager = db_manager.read().await;
+    let details = manager.get_table_details(&table_id);
+
+    // We release lock right after reading data from manager
+    drop(manager);
+
+    return match details
     {
-        return HttpResponse::NotFound().json(
-            Error::new(&format!("table with id: '{}' not found", table_id))
+        Ok(table_schema) => HttpResponse::Ok().json(table_schema),
+        Err(e) => HttpResponse::NotFound().json(
+            Error::new(&format!("{}", e))
         )
-    }
-
-    let mut table_sch = TableSchema::new("table_schema_1");
-
-    table_sch.push_col(&Column::new_int("col_int1"));
-    table_sch.push_col(&Column::new_varchar("col_varchar1"));
-    table_sch.push_col(&Column::new_int("col_int2"));
-
-    HttpResponse::Ok().json(table_sch)
+    };
 }
 
 #[delete("/table/{table_id}")]
@@ -62,19 +69,23 @@ async fn delete_table(table_id: web::Path<String>) -> impl Responder
 }
 
 #[put("/table")]
-async fn put_table(table_schema: web::Json<TableSchema>) -> impl Responder
+async fn put_table(
+    table_schema: web::Json<TableSchema>,
+    db_manager: web::Data<tokio::sync::RwLock<DbManager>>
+) -> impl Responder
 {
-    if random::<bool>()
+    println!("Putting new table");
+
+    let mut manager = db_manager.write().await;
+    let result = manager.put_table(&table_schema.into_inner()).await;
+
+    drop(manager);
+
+    return match result
     {
-        return HttpResponse::BadRequest().json(
-            Problem::new(&Error::new("Couldnt create table from schema"), "put_table endpoint, random context")
-        );
-    }
-
-    let new_uuid = Uuid::new_v4();
-    println!("PUT /table --- got table schema:");
-    println!("uuid: {}", new_uuid);
-    println!("{}", table_schema);
-
-    HttpResponse::Ok().body("table was created")
+        Ok(table_id) => HttpResponse::Ok().body(table_id.to_string()),
+        Err(e) => HttpResponse::BadRequest().json(
+            Error::new(&format!("{}", e))
+        )
+    };
 }

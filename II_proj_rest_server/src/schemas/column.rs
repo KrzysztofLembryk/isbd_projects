@@ -1,6 +1,7 @@
 use serde;
 use std::fmt;
 use crate::db::constants::LogicalColType;
+use validator::{Validate, ValidationError};
 
 #[derive(serde::Serialize)]
 pub enum DataColumn
@@ -9,10 +10,11 @@ pub enum DataColumn
     Varchar(VarcharColumn),
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Validate)]
 pub struct Column
 {
     #[serde(rename = "name")]
+    #[validate(length(min=1, max=255))]
     c_name: String,
     #[serde(rename = "type")]
     c_type: LogicalColType 

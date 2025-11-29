@@ -7,7 +7,7 @@ use validator::{Validate, ValidationError};
 #[derive(serde::Serialize, serde::Deserialize, Validate)]
 pub struct TableSchema
 {
-    #[validate(length(min=1))]
+    #[validate(length(min=1, max=255))]
     name: String,
     columns: Vec<Column>
 }
