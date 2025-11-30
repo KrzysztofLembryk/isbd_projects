@@ -22,48 +22,6 @@ pub type ColumnName = String;
 type FilePath = String;
 pub type TableId = Uuid;
 
-#[derive(Clone, PartialEq)]
-enum DeleteFlag
-{
-    DoDelete,
-    NoDelete
-}
-
-#[derive(Clone)]
-struct TableState
-{
-    delete_flag: DeleteFlag,
-    n_queries_operating_on_table: u16
-}
-
-impl TableState
-{
-    fn new() -> TableState
-    {
-        TableState { 
-            delete_flag: DeleteFlag::NoDelete, 
-            n_queries_operating_on_table: 0
-        }
-    }
-
-    fn new_map(
-        tables_metadata: &HashMap<TableId, TableMetadata>
-    ) -> HashMap<TableId, TableState>
-    {
-        let mut tables_state: HashMap<TableId, TableState> = HashMap::new();
-        for (table_id, _) in tables_metadata
-        {
-            tables_state.insert(*table_id, TableState { 
-                delete_flag: DeleteFlag::NoDelete, n_queries_operating_on_table: 0
-            });
-        }
-        tables_state
-    }
-}
-
-// ####################################################
-// DBMETADATA SHOULD BE CRITICAL SECTION - i.e. RwLock?
-// ####################################################
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct DbMetadata
 {
@@ -223,7 +181,7 @@ impl DbMetadata
 
     /// Function receives TableSchema and adds table with its columns to 
     /// metadata structure, it **DOESN't create** dirs and files
-    pub async fn put_table(
+    pub fn put_table(
         &mut self, 
         table_schema: &TableSchema
     ) -> Result<TableId, DbError>
@@ -235,7 +193,7 @@ impl DbMetadata
         // requires tables to have unique names)
         if self.tables_metadata.contains_key(&table_id)
         {
-            return Err(DbError::Other(format!("DbMetadata::add_new_table: map contains given table_id: '{}', Uuid::new gave the same id", table_id)));
+            return Err(DbError::Other(format!("DbMetadata::add_new_table: map contains given table_id: '{}', Uuid::new gave the same id, this shouldnt happen", table_id)));
         }
 
         let columns = table_schema_into_columns_map(
@@ -244,14 +202,12 @@ impl DbMetadata
             &self.db_data_dir_path,
         )?;
 
-        // Only if we successfully populate columns metadata we insert new table
+        // Only if we successfully create columns metadata we insert new table
         // to our metadata object
         self.tables_metadata.insert(
             table_id, 
-            TableMetadata {
-            table_name: String::from(table_schema.name()),
-            columns: columns
-        });
+            TableMetadata::new(table_schema.name(), columns) 
+        );
         self.tables_states.insert(table_id, TableState::new());
         self.table_count += 1;
 
@@ -395,6 +351,49 @@ impl DbMetadata
 
 }
 
+// ############################################################################
+// ############################ HELPER STRUCTS ################################
+// ############################################################################
+
+#[derive(Clone, PartialEq)]
+enum DeleteFlag
+{
+    DoDelete,
+    NoDelete
+}
+
+#[derive(Clone)]
+struct TableState
+{
+    delete_flag: DeleteFlag,
+    n_queries_operating_on_table: u16
+}
+
+impl TableState
+{
+    fn new() -> TableState
+    {
+        TableState { 
+            delete_flag: DeleteFlag::NoDelete, 
+            n_queries_operating_on_table: 0
+        }
+    }
+
+    fn new_map(
+        tables_metadata: &HashMap<TableId, TableMetadata>
+    ) -> HashMap<TableId, TableState>
+    {
+        let mut tables_state: HashMap<TableId, TableState> = HashMap::new();
+        for (table_id, _) in tables_metadata
+        {
+            tables_state.insert(*table_id, TableState { 
+                delete_flag: DeleteFlag::NoDelete, n_queries_operating_on_table: 0
+            });
+        }
+        tables_state
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct TableMetadata
 {
@@ -405,6 +404,13 @@ struct TableMetadata
 
 impl TableMetadata
 {
+    fn new(name: &str, columns: HashMap<String, ColMetadata>) -> TableMetadata
+    {
+        TableMetadata {
+        table_name: String::from(name),
+        columns: columns
+        }
+    }
     fn into_table_schema(&self) -> TableSchema
     {
         let mut t_schema = TableSchema::new(&self.table_name);

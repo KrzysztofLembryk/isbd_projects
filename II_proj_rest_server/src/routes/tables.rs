@@ -89,7 +89,7 @@ async fn put_table(
     println!("Putting new table");
 
     let mut manager = db_manager.write().await;
-    let result = manager.put_table(&table_schema.into_inner()).await;
+    let result = manager.put_table(&table_schema.into_inner());
 
     drop(manager);
 
@@ -99,6 +99,7 @@ async fn put_table(
         Err(e) => {
             match e
             {
+                // TODO: With internal server error we probably should shutdown server
                 DbError::InternalDbError(e) => 
                     HttpResponse::InternalServerError()
                         .json(Error::new(&format!("{}", e))),

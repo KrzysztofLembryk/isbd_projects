@@ -2,7 +2,7 @@ use crate::db::storage::col_data::ColData;
 use crate::db::storage::col_header::ColHeader;
 use crate::db::storage::metadata::{DbMetadata, TableId};
 use crate::db::constants::{LogicalColType, BATCH_SIZE, METADATA_FILE_PATH, MAX_ALLOWED_METADATA_CHANGES};
-use crate::schemas::query::ShallowQuery;
+use crate::schemas::query::{ShallowQuery, Query};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::csv_reader;
 use crate::db::errors::DbError;
@@ -23,7 +23,7 @@ pub enum TaskMessage
 pub struct DbManager
 {
     db_meta: Option<DbMetadata>,
-    queries_history: Vec<ShallowQuery>,
+    queries: HashMap<Uuid, Query>,
     metadata_dir_path: String, 
     data_dir_path: String,
     nbr_of_metadata_changes: u16,
@@ -36,7 +36,7 @@ impl DbManager
     {
         DbManager{
             db_meta: None,
-            queries_history: Vec::new(),
+            queries: HashMap::new(),
             metadata_dir_path: String::from(METADATA_FILE_PATH),
             data_dir_path: String::from(db_data_dir),
             nbr_of_metadata_changes: 0,
@@ -70,6 +70,10 @@ impl DbManager
         Ok(())
     }
 
+    // ########################################################################
+    // ########################## TABLES HANDLERS #############################
+    // ########################################################################
+
     pub fn get_tables(&self) -> Result<Vec<ShallowTable>, DbError>
     {
         if let Some(meta) = &self.db_meta
@@ -93,7 +97,12 @@ impl DbManager
         Err(DbError::NotFound(format!("DbManager::get_table_details: database was not initialized")))
     }
 
-    pub async fn put_table(
+    pub fn delete_table(&self)
+    {
+        todo!("DbManager::delete_table: NOT IMPLEMENTED")
+    }
+
+    pub fn put_table(
         &mut self, 
         schema: &TableSchema
     ) -> Result<Uuid, DbError> 
@@ -108,7 +117,7 @@ impl DbManager
                     .as_mut()
                     .ok_or_else(|| DbError::NotFound("DbManager::put_table: database was not initialized".to_string()
             ))?;
-            table_id = db_meta.put_table(schema).await?;
+            table_id = db_meta.put_table(schema)?;
             db_meta_clone = db_meta.clone();
         }
 
@@ -122,7 +131,22 @@ impl DbManager
         Ok(table_id)
     }
 
-    pub fn save_metadata(&self) -> Result<(), DbError>
+    // ########################################################################
+    // ########################## QUERIES HANDLERS ############################
+    // ########################################################################
+
+
+    // ########################################################################
+    // ############################# DB SHUTDOWN ##############################
+    // ########################################################################
+    pub fn graceful_shutdown(&self) -> Result<(), DbError>
+    {
+        self.save_metadata()?;
+        self.shutdown()?;
+        Ok(())
+    }
+
+    fn save_metadata(&self) -> Result<(), DbError>
     {
         if let Some(meta) = &self.db_meta
         {
@@ -133,7 +157,7 @@ impl DbManager
         Err(DbError::NotFound(format!("DbManager::put_table: database was not initialized")))
     }
 
-    pub fn shutdown(&self) -> Result<(), DbError>
+    fn shutdown(&self) -> Result<(), DbError>
     {
         self.send_task_msg(TaskMessage::Shutdown)
     }

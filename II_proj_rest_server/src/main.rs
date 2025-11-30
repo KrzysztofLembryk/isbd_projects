@@ -28,12 +28,14 @@ async fn main() -> std::io::Result<()>
     //      - Arc - since we want to be able to share db_manager between Actix 
     //              threads
 
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // TODO: This should be inside db_manager init
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     let (tx_msg, mut rx_msg) = unbounded_channel::<TaskMessage>();
     let mut db_manager = DbManager::new(DB_DATA_DIR, tx_msg.clone());
 
     db_manager.init_db().await.unwrap();
 
-    // TODO: This should be inside db_manager init
     let metadata_saver_task_handle = tokio::spawn(async move {
             loop  
             {
@@ -74,8 +76,7 @@ async fn main() -> std::io::Result<()>
     // MetadataSaverTask to save metadata 
     let db_manager = manager_clone.read().await;
 
-    db_manager.save_metadata().unwrap();
-    db_manager.shutdown().unwrap();
+    db_manager.graceful_shutdown().unwrap();
 
     // Need to wait for MetadataSaverTask to end its execution
     metadata_saver_task_handle.await?;
