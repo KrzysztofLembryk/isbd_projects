@@ -1,19 +1,16 @@
 use actix_web::{HttpResponse, Responder, delete, get, put, web};
-use crate::db::db_manager::{DbManager};
+use crate::db::db_manager::{SharedDbManager};
 use crate::db::errors::DbError;
-use crate::db::storage::metadata::DbMetadata;
 use crate::schemas::table::{ShallowTable, TableSchema};
 use crate::schemas::column::{Column};
 use crate::schemas::error::{Error, Problem};
 use uuid::Uuid;
 use rand::random;
 
-// Request body from HTTP request, and getting data to buffer with given SIZE
-// https://actix.rs/docs/request/
 
 #[get("/tables")]
 async fn get_tables(
-    db_manager: web::Data<tokio::sync::RwLock<DbManager>>
+    db_manager: SharedDbManager
 ) -> impl Responder
 {
     println!("Fetching ALL TABLES DETAILS");
@@ -35,7 +32,7 @@ async fn get_tables(
 #[get("/table/{table_id}")]
 async fn get_table_details(
     table_id: web::Path<Uuid>, 
-    db_manager: web::Data<tokio::sync::RwLock<DbManager>>
+    db_manager: SharedDbManager
 ) -> impl Responder
 {
     println!("Fetching DETAILS for table with id: {}", table_id);
@@ -83,7 +80,7 @@ async fn delete_table(table_id: web::Path<String>) -> impl Responder
 #[put("/table")]
 async fn put_table(
     table_schema: web::Json<TableSchema>,
-    db_manager: web::Data<tokio::sync::RwLock<DbManager>>
+    db_manager: SharedDbManager
 ) -> impl Responder
 {
     println!("Putting new table");

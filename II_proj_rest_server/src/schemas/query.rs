@@ -46,14 +46,13 @@ pub struct ShallowQuery
 
 impl ShallowQuery
 {
-    pub fn new(status: QueryStatus) -> ShallowQuery
+    pub fn new(id: Uuid, status: QueryStatus) -> ShallowQuery
     {
-        let new_uuid = Uuid::new_v4();
-        ShallowQuery { query_id: new_uuid, status: status}
+        ShallowQuery { query_id: id, status: status}
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct Query
 {
     #[serde(rename="queryId")]
@@ -84,6 +83,11 @@ impl Query
             is_res_available: is_res_available, 
             query_definition 
         }
+    }
+
+    pub fn status(&self) -> QueryStatus
+    {
+        self.status.clone()
     }
 }
 

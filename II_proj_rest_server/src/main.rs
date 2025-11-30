@@ -1,15 +1,20 @@
-use II_proj_rest_server::db::storage::metadata::DbMetadata;
 use II_proj_rest_server::routes::tables::{get_tables, get_table_details, put_table, delete_table};
 use II_proj_rest_server::routes::queries::{get_queries, get_query_info, post_query};
 use II_proj_rest_server::db::constants::{DB_DATA_DIR};
 use actix_web::{App, HttpServer, web};
 use II_proj_rest_server::db::db_manager::{DbManager, TaskMessage};
 
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{unbounded_channel};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()>
 {
+    // STREAMING large amounts of data Actix:
+    // https://github.com/actix/actix-web/issues/1653
+
+    // Request body from HTTP request, and getting data to buffer with given SIZE
+    // https://actix.rs/docs/request/
+
     // NEW IDEA:
     // 1. Before running HttpServer we spawn thread/tokio_task or sth with 
     // db_manager
@@ -76,7 +81,7 @@ async fn main() -> std::io::Result<()>
     // MetadataSaverTask to save metadata 
     let db_manager = manager_clone.read().await;
 
-    db_manager.graceful_shutdown().unwrap();
+    db_manager.shutdown().unwrap();
 
     // Need to wait for MetadataSaverTask to end its execution
     metadata_saver_task_handle.await?;

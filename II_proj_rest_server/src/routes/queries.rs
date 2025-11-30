@@ -8,43 +8,47 @@ use crate::schemas::query::{
     ExecuteQueryRequest
 };
 use crate::schemas::error::{Error, Problem};
+use crate::db::db_manager::{SharedDbManager};
 use actix_web::{HttpResponse, Responder, get, post, web};
-use uuid::Uuid;
 use rand::random;
+use uuid::Uuid;
 
 #[get("/queries")]
-async fn get_queries() -> impl Responder
+async fn get_queries(
+    db_manager: SharedDbManager
+) -> impl Responder
 {
-    let mut queries = vec![];
+    println!("Fetching all QUERIES");
 
-    queries.push(ShallowQuery::new(QueryStatus::CREATED));
-    queries.push(ShallowQuery::new(QueryStatus::PLANNING));
-    queries.push(ShallowQuery::new(QueryStatus::RUNNING));
+    let manager = db_manager.read().await;
+    let queries = manager.get_queries();
+
+    drop(manager);
 
     HttpResponse::Ok().json(queries)
 }
 
 
 #[get("/query/{query_id}")]
-async fn get_query_info(query_id: web::Path<String>) -> impl Responder
+async fn get_query_info(
+    query_id: web::Path<Uuid>,
+    db_manager: SharedDbManager
+) -> impl Responder
 {
     println!("Fetching query with id: {}", query_id);
 
-    if random::<bool>()
+    let manager = db_manager.read().await;
+    let query_details = manager.get_query_details(&query_id);
+
+    drop(manager);
+
+    return match query_details
     {
-        return HttpResponse::NotFound().json(
-            Error::new(&format!("query with id: '{}' not found", query_id))
-        );
-    }
-
-    let query = Query::new(
-        QueryStatus::COMPLETED, 
-        true, 
-        AllowedQuery::SELECT_Q(SelectQuery::new("table_1")
-    ));
-
-
-    HttpResponse::Ok().json(query)
+        Ok(q) => HttpResponse::Ok().json(q),
+        Err(e) => HttpResponse::NotFound().json(
+            Error::new(&format!("{}", e))
+        )
+    };
 }
 
 

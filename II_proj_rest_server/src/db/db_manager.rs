@@ -12,6 +12,9 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use std::io::ErrorKind as err_kind;
 use std::collections::HashMap;
 use std::fs::File;
+use actix_web::{web};
+
+pub type SharedDbManager = web::Data<tokio::sync::RwLock<DbManager>>;
 
 pub enum TaskMessage
 {
@@ -134,15 +137,29 @@ impl DbManager
     // ########################################################################
     // ########################## QUERIES HANDLERS ############################
     // ########################################################################
+    pub fn get_queries(&self) -> Vec<ShallowQuery>
+    {
+        self.queries
+            .iter()
+            .map(|(q_id, q_data)| ShallowQuery::new(*q_id, q_data.status()))
+            .collect()
+    }
 
-
+    pub fn get_query_details(&self, query_id: &Uuid) -> Result<Query, DbError>
+    {
+        if let Some(q) = self.queries.get(query_id)
+        {
+            return Ok(q.clone());
+        }
+        Err(DbError::NotFound(format!("Query with id: {}, not found in db.", query_id)))
+    }
     // ########################################################################
     // ############################# DB SHUTDOWN ##############################
     // ########################################################################
-    pub fn graceful_shutdown(&self) -> Result<(), DbError>
+    pub fn shutdown(&self) -> Result<(), DbError>
     {
         self.save_metadata()?;
-        self.shutdown()?;
+        self.perform_shutdown()?;
         Ok(())
     }
 
@@ -157,7 +174,7 @@ impl DbManager
         Err(DbError::NotFound(format!("DbManager::put_table: database was not initialized")))
     }
 
-    fn shutdown(&self) -> Result<(), DbError>
+    fn perform_shutdown(&self) -> Result<(), DbError>
     {
         self.send_task_msg(TaskMessage::Shutdown)
     }
