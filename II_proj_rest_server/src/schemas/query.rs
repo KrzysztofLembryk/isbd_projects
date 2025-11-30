@@ -95,7 +95,15 @@ impl Query
 pub struct ExecuteQueryRequest
 {
     #[serde(rename="queryDefinition")]
-    pub query_definition: AllowedQuery
+    query_definition: AllowedQuery
+}
+
+impl ExecuteQueryRequest
+{
+    pub fn query_definition(&self) -> AllowedQuery
+    {
+        self.query_definition.clone()
+    }
 }
 
 

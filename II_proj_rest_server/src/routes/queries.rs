@@ -51,20 +51,13 @@ async fn get_query_info(
     };
 }
 
-
 #[post("/query")]
 async fn post_query(query: web::Json<ExecuteQueryRequest>) -> impl Responder
 {
-    if random::<bool>()
+    let id = match query.query_definition()
     {
-        return HttpResponse::BadRequest().json(
-            Problem::new(&Error::new("Couldnt post query from request"), "post_query endpoint, random context")
-        );
-    }
-    let id = match &query.query_definition
-    {
-        AllowedQuery::SELECT_Q(q) => "select_id",
-        AllowedQuery::COPY_Q(q) => "copy_id",
+        AllowedQuery::SELECT_Q(select_q) => "select_id",
+        AllowedQuery::COPY_Q(copy_q) => "copy_id",
     };
     
     HttpResponse::Ok().json(id)

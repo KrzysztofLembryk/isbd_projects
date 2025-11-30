@@ -39,6 +39,8 @@ pub struct DbMetadata
     metadata_file_path: String,
     #[serde(skip)]
     tables_states: HashMap<TableId, TableState>,
+    #[serde(skip)]
+    table_name_to_id_map: HashMap<TableName, TableId>,
 }
 
 impl DbMetadata  
@@ -59,12 +61,14 @@ impl DbMetadata
         )?;
 
         let tables_states = TableState::new_map(&table_map);
+        let table_name_to_id_map = create_table_name_to_id_map(&table_map);
         let mut db_meta = DbMetadata {
             table_count: table_count,
             tables_metadata: table_map,
             db_data_dir_path: String::from(data_dir_path),
             metadata_file_path: String::from(metadata_file_path),
-            tables_states: tables_states
+            tables_states: tables_states,
+            table_name_to_id_map: table_name_to_id_map
         };
 
         // For each column we create a filepath: DB_DIR/table_name/col_name_0
@@ -121,10 +125,6 @@ impl DbMetadata
                                 .or_else(|e| 
                                     return Err(DbError::IoError(e.into()))
                                 )?;
-        let tables_state = TableState::new_map(&metadata.tables_metadata);
-
-        metadata.metadata_file_path = String::from(metadata_path);
-        metadata.tables_states = tables_state;
 
         is_metadata_ok(
             metadata.table_count, 
@@ -132,6 +132,12 @@ impl DbMetadata
             &metadata.metadata_file_path,
             &metadata.db_data_dir_path
         )?;
+
+        let tables_state = TableState::new_map(&metadata.tables_metadata);
+
+        metadata.metadata_file_path = String::from(metadata_path);
+        metadata.tables_states = tables_state;
+        metadata.table_name_to_id_map = create_table_name_to_id_map(&metadata.tables_metadata);
 
         Ok(metadata)
     }
@@ -209,6 +215,10 @@ impl DbMetadata
             TableMetadata::new(table_schema.name(), columns) 
         );
         self.tables_states.insert(table_id, TableState::new());
+        self.table_name_to_id_map.insert(
+            String::from(table_schema.name()), 
+            table_id
+        );
         self.table_count += 1;
 
         Ok(table_id)
@@ -597,4 +607,17 @@ fn table_schema_into_columns_map(
         );
     }
     Ok(col_map)
+}
+
+fn create_table_name_to_id_map(
+    table_map: &HashMap<TableId, TableMetadata>
+) -> HashMap<TableName, TableId>
+{
+    let mut name_to_id_map = HashMap::new();
+    for (tab_id, tab_meta) in table_map
+    {
+        name_to_id_map.insert(tab_meta.table_name.clone(), tab_id.clone());
+    }
+
+    name_to_id_map
 }
