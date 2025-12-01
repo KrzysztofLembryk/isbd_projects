@@ -28,7 +28,6 @@ async fn get_queries(
     HttpResponse::Ok().json(queries)
 }
 
-
 #[get("/query/{query_id}")]
 async fn get_query_info(
     query_id: web::Path<Uuid>,
@@ -52,7 +51,10 @@ async fn get_query_info(
 }
 
 #[post("/query")]
-async fn post_query(query: web::Json<ExecuteQueryRequest>) -> impl Responder
+async fn post_query(
+    query: web::Json<ExecuteQueryRequest>,
+    db_manager: SharedDbManager
+) -> impl Responder
 {
     let id = match query.query_definition()
     {

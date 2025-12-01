@@ -2,7 +2,7 @@ use crate::db::storage::col_data::ColData;
 use crate::db::storage::col_header::ColHeader;
 use crate::db::storage::metadata::{DbMetadata, TableId};
 use crate::db::constants::{LogicalColType, BATCH_SIZE, METADATA_FILE_PATH, MAX_ALLOWED_METADATA_CHANGES};
-use crate::schemas::query::{ShallowQuery, Query};
+use crate::schemas::query::{AllowedQuery, CopyQuery, Query, SelectQuery, ShallowQuery};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::csv_reader;
 use crate::db::errors::DbError;
@@ -22,11 +22,18 @@ pub enum TaskMessage
     Shutdown
 }
 
+// Separate Db task running in the background
+// When wanting table data endpoint sends msg to DB task and awaits response
+// When wanting quries details -||-
+// When submitting new query endpoint sends message, DB task creates task that
+// will handle this query and will wait for its execution (query task will send messages to db so that db can change query status)
+// Basically we will do an executor system 
 
 pub struct DbManager
 {
     db_meta: Option<DbMetadata>,
     queries: HashMap<Uuid, Query>,
+    query_queue: Vec<Uuid>, // stores order of queries to be executed
     metadata_dir_path: String, 
     data_dir_path: String,
     nbr_of_metadata_changes: u16,
@@ -40,6 +47,7 @@ impl DbManager
         DbManager{
             db_meta: None,
             queries: HashMap::new(),
+            query_queue: Vec::new(),
             metadata_dir_path: String::from(METADATA_FILE_PATH),
             data_dir_path: String::from(db_data_dir),
             nbr_of_metadata_changes: 0,
@@ -100,7 +108,7 @@ impl DbManager
         Err(DbError::NotFound(format!("DbManager::get_table_details: database was not initialized")))
     }
 
-    pub fn delete_table(&self)
+    pub async fn delete_table(&self)
     {
         todo!("DbManager::delete_table: NOT IMPLEMENTED")
     }
@@ -121,6 +129,7 @@ impl DbManager
                     .ok_or_else(|| DbError::NotFound("DbManager::put_table: database was not initialized".to_string()
             ))?;
             table_id = db_meta.put_table(schema)?;
+            // TODO: we should clone only when needed
             db_meta_clone = db_meta.clone();
         }
 
@@ -154,6 +163,26 @@ impl DbManager
         Err(DbError::NotFound(format!("Query with id: {}, not found in db.", query_id)))
     }
 
+    pub fn post_query(&mut self, query: AllowedQuery) -> Result<Uuid, DbError>
+    {
+        // Will add query to db_manager query map
+        // Will spawn task that handles query
+        match query
+        {
+            AllowedQuery::COPY_Q(q) => self.handle_copy_query(&q),
+            AllowedQuery::SELECT_Q(q) => self.handle_select_query(&q),
+        }
+        todo!("implement post_query")
+    }
+
+    fn handle_copy_query(&mut self, query: &CopyQuery)
+    {
+
+    }
+    fn handle_select_query(&mut self, query: &SelectQuery)
+    {
+
+    }
     // ########################################################################
     // ############################# DB SHUTDOWN ##############################
     // ########################################################################
@@ -161,6 +190,7 @@ impl DbManager
     {
         self.save_metadata()?;
         self.perform_shutdown()?;
+        // TODO: await for tasks
         Ok(())
     }
 

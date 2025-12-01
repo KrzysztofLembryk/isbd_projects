@@ -62,6 +62,7 @@ async fn main() -> std::io::Result<()>
     let manager_clone = db_manager.clone();
 
     HttpServer::new(move || {
+        // Here we will do module registration, we will get DB tx and we will send our tx to db
         App::new()
             .app_data(db_manager.clone())
             .service(get_tables)

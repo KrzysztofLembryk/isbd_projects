@@ -584,7 +584,7 @@ fn table_schema_into_columns_map(
         }
         if col_map.contains_key(&col_name)
         {
-            return Err(DbError::InvalidColumnName { msg: format!("Provided table doesn't have UNIQUE column names, creating table ABORTED"), name: col_name });
+            return Err(DbError::InvalidColumnName { msg: format!("Provided table: '{}' doesn't have UNIQUE column names, creating table ABORTED", schema.name()), name: col_name });
         }
 
         let file_path = create_file_path(
