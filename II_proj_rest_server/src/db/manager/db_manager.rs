@@ -1,10 +1,10 @@
-use crate::db::storage::metadata::{DbMetadata, TableId};
+use crate::db::storage::metadata::{DbMetadata, TableMetadata, TableId};
 use crate::db::constants::{LogicalColType, BATCH_SIZE, METADATA_FILE_PATH, MAX_ALLOWED_METADATA_CHANGES};
 use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryStatus, SelectQuery, ShallowQuery};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::errors::DbError;
-use crate::db::manager::messages::{MetaSaverMessage, ResMsg};
-use crate::db::manager::metadata_saver::{MetadataSaver};
+use crate::db::manager::messages::{DbMaintenanceMsg, ResMsg};
+use crate::db::manager::metadata_saver::{DbMaintenanceTask};
 
 use uuid::Uuid;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
@@ -96,85 +96,31 @@ pub struct DbManager
     db_meta: Option<DbMetadata>,
     query_store: QueryStore,
     paths: DbPaths,
-    metadata_saver: MetadataSaver,
+    metadata_saver: DbMaintenanceTask,
     tx_server_channels: HashMap<Uuid, UnboundedSender<ResMsg>>
 }
 
 impl DbManager
 {
-    pub fn new(db_data_dir_path: &str, metadata_file_path: &str) -> DbManager
+    pub async fn new(
+        db_data_dir_path: &str, 
+        metadata_file_path: &str
+    ) -> Result<DbManager, DbError>
     {
         println!("metadata file path: {}, db_data_dir_path: {}", metadata_file_path, db_data_dir_path);
-        DbManager{
+        let mut db_manager = DbManager{
             db_meta: None,
             query_store: QueryStore::new(),
             paths: DbPaths::new(metadata_file_path, db_data_dir_path),
-            metadata_saver: MetadataSaver::spawn(),
+            metadata_saver: DbMaintenanceTask::spawn(db_data_dir_path),
             tx_server_channels: HashMap::new(),
-        }
+        };
+
+        db_manager.init_metadata().await?;
+
+        Ok(db_manager)
     }
 
-    pub async fn init_metadata(&mut self) -> Result<(), DbError>
-    {
-        println!("INITING METADATA");
-        // To start db, db metadata file must be present
-        let metadata_path = &self.paths.metadata_file_path;
-        let data_dir = &self.paths.data_dir_path;
-
-        println!("INIT_METADATA: metadata file path: {}, db_data_dir_path: {}", metadata_path, data_dir);
-        self.db_meta = Some(
-            match DbMetadata::read_from_file(metadata_path).await
-            {
-                Ok(meta) => meta,
-                Err(DbError::IoError(ref io_err)) 
-                    if io_err.kind() == err_kind::NotFound => {
-                        let db = DbMetadata::new_empty(
-                            metadata_path, 
-                            data_dir,
-                        )?;
-
-                        db.save_to_file().await?;
-
-                        db
-                    },
-                Err(e) => return Err(e)
-            }
-        );
-        Ok(())
-    }
-
-    pub fn register(
-        &mut self, 
-        connection_id: &Uuid, 
-        tx: UnboundedSender<ResMsg>
-    )
-    {
-        println!("Registering: {}", connection_id);
-        self.tx_server_channels.insert(connection_id.clone(), tx);
-    }
-
-    pub fn unregister(&mut self, connection_id: &Uuid)
-    {
-        println!("Unregistering: {}", connection_id);
-        self.tx_server_channels.remove(connection_id);
-    }
-
-    pub fn send_result(
-        &self, 
-        id: &Uuid, 
-        msg: ResMsg
-    ) -> Result<(), DbError>
-    {
-        if let Some(tx) = self.tx_server_channels.get(id)
-        {
-            match tx.send(msg)
-            {
-                Ok(_) => return Ok(()),
-                Err(e) => return Err(DbError::Other(format!("DbManager::send_result: error '{}'", e)))
-            };
-        }
-        Err(DbError::NotFound(format!("channel with id: {} ", id)))
-    }
     // ########################################################################
     // ########################## TABLES HANDLERS #############################
     // ########################################################################
@@ -202,10 +148,30 @@ impl DbManager
         Err(DbError::NotFound(format!("DbManager::get_table_details: database was not initialized")))
     }
 
-    pub fn delete_table(&self, table_id: &Uuid) -> Result<(), DbError>
+    pub fn mark_table_to_delete(
+        &mut self, table_id: &Uuid) -> Result<(), DbError>
     {
+        let db_meta = self.db_meta
+                .as_mut()
+                .ok_or_else(|| DbError::NotFound("DbManager::mark_table_to_delete: database was not initialized".to_string()
+        ))?;
+
+        db_meta.mark_table_to_delete(table_id)?;
+
         Ok(())
-        // todo!("DbManager::delete_table: NOT IMPLEMENTED")
+    }
+
+    pub fn delete_table(
+        &mut self,
+        table_id: &Uuid
+    ) -> Result<TableMetadata, DbError>
+    {
+        let db_meta = self.db_meta
+                .as_mut()
+                .ok_or_else(|| DbError::NotFound("DbManager::delete_table: database was not initialized".to_string()
+        ))?;
+
+        db_meta.delete_table(table_id)
     }
 
     pub fn put_table(
@@ -224,7 +190,9 @@ impl DbManager
             let db_meta_clone = db_meta.clone();
 
             db_meta.reset_changes();
-            self.send_task_msg(MetaSaverMessage::SaveMetadata(db_meta_clone))?;
+            self.notify_db_maintenance_background_task(
+                DbMaintenanceMsg::SaveMetadata(db_meta_clone)
+            )?;
         }
 
         Ok(table_id)
@@ -233,6 +201,7 @@ impl DbManager
     // ########################################################################
     // ########################## QUERIES HANDLERS ############################
     // ########################################################################
+
     pub fn get_queries(&self) -> Result<Vec<ShallowQuery>, DbError>
     {
         // TODO: We should also check if db is initialized here
@@ -272,6 +241,43 @@ impl DbManager
     {
 
     }
+
+    // ########################################################################
+    // ################## SERVER CONNECTIONS COMMUNICATION ####################
+    // ########################################################################
+    pub fn register(
+        &mut self, 
+        connection_id: &Uuid, 
+        tx: UnboundedSender<ResMsg>
+    )
+    {
+        println!("Registering: {}", connection_id);
+        self.tx_server_channels.insert(connection_id.clone(), tx);
+    }
+
+    pub fn unregister(&mut self, connection_id: &Uuid)
+    {
+        println!("Unregistering: {}", connection_id);
+        self.tx_server_channels.remove(connection_id);
+    }
+
+    pub fn send_result(
+        &self, 
+        id: &Uuid, 
+        msg: ResMsg
+    ) -> Result<(), DbError>
+    {
+        if let Some(tx) = self.tx_server_channels.get(id)
+        {
+            match tx.send(msg)
+            {
+                Ok(_) => return Ok(()),
+                Err(e) => return Err(DbError::Other(format!("DbManager::send_result: error '{}'", e)))
+            };
+        }
+        Err(DbError::NotFound(format!("channel with id: {} ", id)))
+    }
+
     // ########################################################################
     // ############################# DB SHUTDOWN ##############################
     // ########################################################################
@@ -283,11 +289,25 @@ impl DbManager
         Ok(())
     }
 
+    // ########################################################################
+    // ################## DB MAINTENANCE TASK COMMUNICATION ###################
+    // ########################################################################
+    
+    pub fn schedule_table_deletion(
+        &self, 
+        t_meta: TableMetadata
+    ) -> Result<(), DbError> 
+    {
+        self.notify_db_maintenance_background_task(
+            DbMaintenanceMsg::DeleteTable(t_meta)
+        )
+    }
+
     fn save_metadata(&self) -> Result<(), DbError>
     {
         if let Some(meta) = &self.db_meta
         {
-            self.send_task_msg(MetaSaverMessage::SaveMetadata(meta.clone()))?;
+            self.notify_db_maintenance_background_task(DbMaintenanceMsg::SaveMetadata(meta.clone()))?;
             return Ok(());
         }
 
@@ -296,7 +316,7 @@ impl DbManager
 
     async fn perform_shutdown(self) -> Result<(), DbError>
     {
-        self.send_task_msg(MetaSaverMessage::Shutdown)?;
+        self.notify_db_maintenance_background_task(DbMaintenanceMsg::Shutdown)?;
         match self.metadata_saver.await_task().await
         {
             Ok(()) => Ok(()),
@@ -304,10 +324,43 @@ impl DbManager
         }
     }
 
-    fn send_task_msg(&self, msg: MetaSaverMessage) -> Result<(), DbError> 
+    fn notify_db_maintenance_background_task(
+        &self, 
+        msg: DbMaintenanceMsg
+    ) -> Result<(), DbError> 
     {
         self.metadata_saver.send_msg(msg)
     }
+
+    async fn init_metadata(&mut self) -> Result<(), DbError>
+    {
+        println!("INITING METADATA");
+        // To start db, db metadata file must be present
+        let metadata_path = &self.paths.metadata_file_path;
+        let data_dir = &self.paths.data_dir_path;
+
+        println!("INIT_METADATA: metadata file path: {}, db_data_dir_path: {}", metadata_path, data_dir);
+        self.db_meta = Some(
+            match DbMetadata::read_from_file(metadata_path).await
+            {
+                Ok(meta) => meta,
+                Err(DbError::IoError(ref io_err)) 
+                    if io_err.kind() == err_kind::NotFound => {
+                        let db = DbMetadata::new_empty(
+                            metadata_path, 
+                            data_dir,
+                        )?;
+
+                        db.save_to_file().await?;
+
+                        db
+                    },
+                Err(e) => return Err(e)
+            }
+        );
+        Ok(())
+    }
+
     // Currently naive implementation just to create some files for our db <br>
     // !!!!!!!! <br> 
     // !!!!!!!! NOT STREAMING, so probably huge csv files will give error <br>

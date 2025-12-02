@@ -1,5 +1,5 @@
 use crate::db::errors::DbError;
-use crate::db::storage::metadata::{DbMetadata};
+use crate::db::storage::metadata::{DbMetadata, TableMetadata};
 use crate::schemas::table::{ShallowTable, TableSchema};
 use crate::schemas::query::{AllowedQuery, Query, ShallowQuery};
 use uuid::Uuid;
@@ -34,8 +34,10 @@ pub enum ResMsg
 
 }
 
-pub enum MetaSaverMessage
+type DirPath = String;
+pub enum DbMaintenanceMsg
 {
     SaveMetadata(DbMetadata),
+    DeleteTable(TableMetadata),
     Shutdown
 }

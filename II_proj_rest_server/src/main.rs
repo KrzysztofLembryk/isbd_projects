@@ -28,8 +28,8 @@ async fn main() -> std::io::Result<()>
     // and pass clones of given tables metadata, if these tasks will read data 
     // we can give them clone of channel to send data directly to the server Thread
 
-    let mut db_manager = DbManager::new(DB_DATA_DIR, METADATA_FILE_PATH);
-    db_manager.init_metadata().await.unwrap();
+    let mut db_manager = 
+        DbManager::new(DB_DATA_DIR, METADATA_FILE_PATH).await.unwrap();
 
     let (tx_db, mut rx_db) = unbounded_channel::<DbCmd>();
     let tx_db_clone = tx_db.clone();
@@ -68,13 +68,32 @@ async fn main() -> std::io::Result<()>
                         );
                     },
                     Some(DbCmd::DeleteTable(conn_id, table_id)) => {
-                        let res = db_manager.delete_table(&table_id);
+                        let res = db_manager.mark_table_to_delete(&table_id);
 
-                        send_result(
-                            ResMsg::ResDeleteTable(res), 
-                            &conn_id, 
-                            &mut db_manager
-                        );
+                        match db_manager.delete_table(&table_id)
+                        {
+                            Ok(t_meta) => {
+                                // No queries running on table, so we can 
+                                // schedule table deletion
+                                let res = db_manager
+                                            .schedule_table_deletion(t_meta);
+                                send_result(
+                                    ResMsg::ResDeleteTable(res), 
+                                    &conn_id, 
+                                    &mut db_manager
+                                );
+                            },
+                            Err(e) => {
+                                // This means we cannot yet delete table, since
+                                // there are some queries running on it
+                                println!("DbTask::DeleteTable: {}", e);
+                                send_result(
+                                    ResMsg::ResDeleteTable(res), 
+                                    &conn_id, 
+                                    &mut db_manager
+                                );
+                            }
+                        }
                     },
                     Some(DbCmd::PutTable(conn_id, table_schema)) => {
                         let res = db_manager.put_table(&table_schema);
@@ -123,9 +142,6 @@ async fn main() -> std::io::Result<()>
             }
         }
     );                    
-    // Internally, web::Data uses Arc
-    // --> So we have Arc<RwLock<DbManager>>
-    // let db_manager = web::Data::new(tokio::sync::RwLock::new(db_manager));
 
     HttpServer::new(move || {
         // Here we will do thread registration, we will get DB tx and we will send our tx to db
@@ -154,11 +170,6 @@ async fn main() -> std::io::Result<()>
 
     tx_db_clone.send(DbCmd::Shutdown).unwrap();
     db_task.await.unwrap();
-    // After Httpserver ends its execution, we acquire lock and tell 
-    // MetadataSaverTask to save metadata 
-    // let db_manager = manager_clone.read().await;
-
-    // db_manager.shutdown().await.unwrap();
 
     Ok(())
 }

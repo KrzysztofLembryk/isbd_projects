@@ -6,6 +6,8 @@ use crate::schemas::error::{Error};
 use actix_web::{HttpResponse, Responder, get, post, web};
 use uuid::Uuid;
 
+// TODO: remove code duplication by introducing helper functions/macro
+
 #[get("/queries")]
 async fn get_queries(
     db_client: web::Data<tokio::sync::RwLock<DbClient>>

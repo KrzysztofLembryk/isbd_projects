@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::vec;
+use actix_web::guard::Delete;
 use regex::Regex;
 use serde;
 use serde_json;
@@ -155,11 +156,11 @@ impl DbMetadata
         {
             // If everything works correctly, we should have the same table_ids
             // in tables_states AND in tables_metadata
-            let state = self.tables_states
+            let table_state = self.tables_states
                             .get(t_id)
                             .expect(&format!("DbMetadata::get_tables: Our DB somehow ended up in INVALID STATE, tables_states doesn't have id: '{}', while tables_metadata has such id", t_id));
             
-            match state.delete_flag
+            match table_state.delete_flag
             {
                 DeleteFlag::NoDelete => tables.push(
                                     ShallowTable::new(t_id, &t_meta.table_name)
@@ -178,16 +179,64 @@ impl DbMetadata
     {
         if let Some(tab_meta) = self.tables_metadata.get(table_id)
         {
-            let state = self.tables_states
+            let table_state = self.tables_states
                             .get(table_id)
                             .expect(&format!("DbMetadata::get_table_details: Our DB somehow ended up in INVALID STATE, tables_states doesn't have id: '{}', while tables_metadata has such id", table_id));
-            match state.delete_flag
+            match table_state.delete_flag
             {
                 DeleteFlag::NoDelete => return Ok(tab_meta.into_table_schema()),
                 DeleteFlag::DoDelete => return Err(DbError::NotFound(format!("Table with id: {}, not found in db.", table_id)))
             }
         }
         Err(DbError::NotFound(format!("Table with id: {}, not found in db.", table_id)))
+    }
+
+    pub fn mark_table_to_delete(
+        &mut self, 
+        table_id: &Uuid
+    ) -> Result<(), DbError>
+    {
+        if !self.tables_metadata.contains_key(table_id)
+            || !self.tables_states.contains_key(table_id)
+        {
+            return Err(DbError::NotFound(format!("Table with id: {} couldn't be deleted, since it's not in database", table_id)));
+        }
+
+        self.tables_states
+            .get_mut(table_id)
+            .unwrap() // will never panic because of previous checks
+            .delete_flag = DeleteFlag::DoDelete;
+
+        Ok(())
+    }
+
+    pub fn delete_table(
+        &mut self, 
+        table_id: &Uuid
+    ) -> Result<TableMetadata, DbError>
+    {
+        let table_meta = self.tables_metadata.get(table_id);
+        let table_state = self.tables_states.get(table_id);
+
+        if let Some(_) = table_meta 
+        && let Some(t_state) = table_state
+        {
+            if t_state.n_queries_operating_on_table > 0
+            {
+                return Err(DbError::Other(format!("Table with id: {} couldn't be deleted, since there are still: '{}' queries operating on it.", table_id, t_state.n_queries_operating_on_table)));
+            }
+            if t_state.delete_flag != DeleteFlag::DoDelete
+            {
+                return Err(DbError::Other(format!("Table with id: {} couldn't be deleted, since it's not marked to deletion", table_id)));
+            }
+
+            let t_meta = self.tables_metadata.remove(table_id).unwrap();
+            self.tables_states.remove(table_id);
+
+            return Ok(t_meta);
+        }
+
+        return Err(DbError::NotFound(format!("Table with id: {} couldn't be deleted, since it's not in database", table_id)));
     }
 
     /// Function receives TableSchema and adds table with its columns to 
@@ -216,8 +265,8 @@ impl DbMetadata
         // Only if we successfully create columns metadata we insert new table
         // to our metadata object
         self.tables_metadata.insert(
-            table_id, 
-            TableMetadata::new(table_schema.name(), columns) 
+            table_id.clone(), 
+            TableMetadata::new(table_schema.name(), &table_id, columns) 
         );
         self.tables_states.insert(table_id, TableState::new());
         self.table_name_to_id_map.insert(
@@ -420,22 +469,29 @@ impl TableState
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
-struct TableMetadata
+pub struct TableMetadata
 {
     table_name: TableName,
+    table_id: Uuid,
     columns: HashMap<ColumnName, ColMetadata>,
     // row_count: u32 // TODO: Table should remember how many rows it has
 }
 
 impl TableMetadata
 {
-    fn new(name: &str, columns: HashMap<String, ColMetadata>) -> TableMetadata
+    fn new(
+        name: &str, 
+        id: &Uuid, 
+        columns: HashMap<String, ColMetadata>
+    ) -> TableMetadata
     {
         TableMetadata {
         table_name: String::from(name),
+        table_id: id.clone(),
         columns: columns
         }
     }
+
     fn into_table_schema(&self) -> TableSchema
     {
         let mut t_schema = TableSchema::new(&self.table_name);
@@ -446,6 +502,16 @@ impl TableMetadata
         }
 
         t_schema
+    }
+
+    pub fn table_name(&self) -> &str
+    {
+        &self.table_name
+    }
+
+    pub fn table_id(&self) -> &Uuid
+    {
+        &self.table_id
     }
 }
 
