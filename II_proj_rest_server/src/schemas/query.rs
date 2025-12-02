@@ -3,7 +3,7 @@ use uuid::Uuid;
 use serde;
 use serde::ser::Serialize;
 
-#[derive(Clone, Copy, serde::Serialize)]
+#[derive(Clone, Copy, serde::Serialize, Debug)]
 pub enum QueryStatus
 {
     CREATED,
@@ -36,7 +36,7 @@ impl Serialize for AllowedQuery
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub struct ShallowQuery
 {
     #[serde(rename="queryId")]
@@ -85,9 +85,29 @@ impl Query
         }
     }
 
+    pub fn id(&self) -> &Uuid
+    {
+        &self.query_id
+    }
+
     pub fn status(&self) -> QueryStatus
     {
         self.status.clone()
+    }
+
+    pub fn update_status(&mut self, new_status: QueryStatus)
+    {
+        match new_status
+        {
+            QueryStatus::COMPLETED => {
+                self.is_res_available = true;
+                self.status = new_status;
+            },
+            _ => {
+                self.status = new_status;
+            }
+
+        }
     }
 }
 

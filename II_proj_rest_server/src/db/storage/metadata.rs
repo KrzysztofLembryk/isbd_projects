@@ -9,7 +9,7 @@ use uuid::Uuid;
 use tokio::fs as t_fs;
 
 use crate::db::errors::{DbError};
-use crate::db::constants::{MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX};
+use crate::db::constants::{MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX, MAX_ALLOWED_METADATA_CHANGES};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::schemas::column::{Column};
 
@@ -41,6 +41,8 @@ pub struct DbMetadata
     tables_states: HashMap<TableId, TableState>,
     #[serde(skip)]
     table_name_to_id_map: HashMap<TableName, TableId>,
+    #[serde(skip)]
+    nbr_of_metadata_changes: u16,
 }
 
 impl DbMetadata  
@@ -68,7 +70,8 @@ impl DbMetadata
             db_data_dir_path: String::from(data_dir_path),
             metadata_file_path: String::from(metadata_file_path),
             tables_states: tables_states,
-            table_name_to_id_map: table_name_to_id_map
+            table_name_to_id_map: table_name_to_id_map,
+            nbr_of_metadata_changes: 0
         };
 
         // For each column we create a filepath: DB_DIR/table_name/col_name_0
@@ -126,6 +129,8 @@ impl DbMetadata
                                     return Err(DbError::IoError(e.into()))
                                 )?;
 
+        metadata.metadata_file_path = String::from(metadata_path);
+
         is_metadata_ok(
             metadata.table_count, 
             &metadata.tables_metadata, 
@@ -135,9 +140,9 @@ impl DbMetadata
 
         let tables_state = TableState::new_map(&metadata.tables_metadata);
 
-        metadata.metadata_file_path = String::from(metadata_path);
         metadata.tables_states = tables_state;
         metadata.table_name_to_id_map = create_table_name_to_id_map(&metadata.tables_metadata);
+        metadata.nbr_of_metadata_changes = 0;
 
         Ok(metadata)
     }
@@ -220,10 +225,20 @@ impl DbMetadata
             table_id
         );
         self.table_count += 1;
+        self.nbr_of_metadata_changes += 1;
 
         Ok(table_id)
     }
 
+    pub fn is_enough_changes(&self) -> bool
+    {
+        self.nbr_of_metadata_changes >= MAX_ALLOWED_METADATA_CHANGES
+    }
+
+    pub fn reset_changes(&mut self)
+    {
+        self.nbr_of_metadata_changes = 0;
+    }
     // ###################################################################### 
     // ############################ GETTERS #################################
     // ###################################################################### 
@@ -472,7 +487,7 @@ fn is_metadata_ok(
         return Err(DbError::Other(format!("DbMetadata::new: file_path: '{}', does not satisfy regex: '{}'", metadata_file_path, FILE_PATH_REGEX)));
     }
 
-    if !re.is_match(&metadata_file_path) 
+    if !re.is_match(&data_dir_path) 
     {
         return Err(DbError::Other(format!("DbMetadata::new: data_dir_path: '{}', does not satisfy regex: '{}'", data_dir_path, FILE_PATH_REGEX)));
     }

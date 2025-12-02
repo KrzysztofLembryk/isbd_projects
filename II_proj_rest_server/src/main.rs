@@ -1,10 +1,13 @@
 use II_proj_rest_server::routes::tables::{get_tables, get_table_details, put_table, delete_table};
 use II_proj_rest_server::routes::queries::{get_queries, get_query_info, post_query};
-use II_proj_rest_server::db::constants::{DB_DATA_DIR};
+use II_proj_rest_server::db::constants::{DB_DATA_DIR, METADATA_FILE_PATH};
 use actix_web::{App, HttpServer, web};
-use II_proj_rest_server::db::db_manager::{DbManager, TaskMessage};
+use II_proj_rest_server::db::manager::db_manager::{DbManager};
+use II_proj_rest_server::db::manager::messages::{DbCmd, ResMsg};
+use II_proj_rest_server::db::db_client::DbClient;
 
 use tokio::sync::mpsc::{unbounded_channel};
+use uuid::Uuid;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()>
@@ -25,46 +28,117 @@ async fn main() -> std::io::Result<()>
     // and pass clones of given tables metadata, if these tasks will read data 
     // we can give them clone of channel to send data directly to the server Thread
 
-    // OLD IDEA:
-    // 1. We initialize db_manager
-    // 2. We initialize our Database (i.e. DbMetadata inside db_manager)
-    // 3. We create Arc<RwLock<db_manager>>
-    //      - RwLock - read write lock, allows many readers, but one writer
-    //      - Arc - since we want to be able to share db_manager between Actix 
-    //              threads
+    let mut db_manager = DbManager::new(DB_DATA_DIR, METADATA_FILE_PATH);
+    db_manager.init_metadata().await.unwrap();
 
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // TODO: This should be inside db_manager init
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    let (tx_msg, mut rx_msg) = unbounded_channel::<TaskMessage>();
-    let mut db_manager = DbManager::new(DB_DATA_DIR, tx_msg.clone());
+    let (tx_db, mut rx_db) = unbounded_channel::<DbCmd>();
+    let tx_db_clone = tx_db.clone();
 
-    db_manager.init_db().await.unwrap();
-
-    let metadata_saver_task_handle = tokio::spawn(async move {
+    let db_task = tokio::spawn(async move {
+            println!("SPAWNING DB TASK");
             loop  
             {
-                match rx_msg.recv().await
+                // TODO: probably this can be DONE BETTER, less code repetition
+                match rx_db.recv().await
                 {
-                    Some(TaskMessage::Shutdown) => {break;},
-                    Some(TaskMessage::SaveMetadata(meta)) => {
-                        meta.save_to_file().await.unwrap();
+                    Some(DbCmd::Shutdown) => {
+                        println!("\n##############\nDB GOT SHUTDOWN\n##############");
+                        db_manager.shutdown().await.unwrap();
+                        break;
                     },
-                    None => {break;}
+                    Some(DbCmd::Register(id, tx)) => {
+                        db_manager.register(&id, tx);
+                    }
+                    Some(DbCmd::GetTables(conn_id)) => {
+                        let res = db_manager.get_tables();
+
+                        send_result(
+                            ResMsg::ResTables(res), 
+                            &conn_id, 
+                            &mut db_manager
+                        );
+                    }
+                    Some(DbCmd::GetTableDetails(conn_id, id)) => {
+                        let res = db_manager.get_table_details(&id);
+
+                        send_result(
+                            ResMsg::ResTableDetails(res), 
+                            &conn_id, 
+                            &mut db_manager
+                        );
+                    },
+                    Some(DbCmd::DeleteTable(conn_id, table_id)) => {
+                        let res = db_manager.delete_table(&table_id);
+
+                        send_result(
+                            ResMsg::ResDeleteTable(res), 
+                            &conn_id, 
+                            &mut db_manager
+                        );
+                    },
+                    Some(DbCmd::PutTable(conn_id, table_schema)) => {
+                        let res = db_manager.put_table(&table_schema);
+
+                        send_result(
+                            ResMsg::ResPutTable(res),
+                            &conn_id, 
+                            &mut db_manager
+                        );
+                    },
+                    Some(DbCmd::GetQueries(conn_id)) => {
+                        let res = db_manager.get_queries();
+
+                        send_result(
+                            ResMsg::ResQueries(res),
+                            &conn_id, 
+                            &mut db_manager
+                        );
+                    },
+                    Some(DbCmd::GetQueryDetails(conn_id, query_id)) =>
+                    {
+                        let res = db_manager
+                            .get_query_details(&query_id);
+
+                        send_result(
+                            ResMsg::ResQueryDetails(res),
+                            &conn_id, 
+                            &mut db_manager
+                        );
+                    },
+                    Some(DbCmd::PostQuery(conn_id, q)) => {
+                        let res = db_manager
+                            .post_query(q);
+
+                        send_result(
+                            ResMsg::ResPostQuery(res),
+                            &conn_id, 
+                            &mut db_manager
+                        );
+                    }
+                    None => {
+                        println!("Channel closed, breaking");
+                        break;
+                    }
                 }
             }
         }
     );                    
-
     // Internally, web::Data uses Arc
     // --> So we have Arc<RwLock<DbManager>>
-    let db_manager = web::Data::new(tokio::sync::RwLock::new(db_manager));
-    let manager_clone = db_manager.clone();
+    // let db_manager = web::Data::new(tokio::sync::RwLock::new(db_manager));
 
     HttpServer::new(move || {
-        // Here we will do module registration, we will get DB tx and we will send our tx to db
+        // Here we will do thread registration, we will get DB tx and we will send our tx to db
+        let id = Uuid::new_v4();
+        let db_tx = tx_db.clone();
+        let (tx_thread, rx_thread) = unbounded_channel::<ResMsg>();
+        db_tx.send(DbCmd::Register(id.clone(), tx_thread)).unwrap();
+
+        let db_client = DbClient::new(id, db_tx, rx_thread);
+
         App::new()
-            .app_data(db_manager.clone())
+            // db_client will be local for each thread
+            .app_data(web::Data::new(tokio::sync::RwLock::new(db_client)))
             .service(get_tables)
             .service(get_table_details)
             .service(delete_table)
@@ -78,14 +152,23 @@ async fn main() -> std::io::Result<()>
     .await?;
 
 
+    tx_db_clone.send(DbCmd::Shutdown).unwrap();
+    db_task.await.unwrap();
     // After Httpserver ends its execution, we acquire lock and tell 
     // MetadataSaverTask to save metadata 
-    let db_manager = manager_clone.read().await;
+    // let db_manager = manager_clone.read().await;
 
-    db_manager.shutdown().unwrap();
-
-    // Need to wait for MetadataSaverTask to end its execution
-    metadata_saver_task_handle.await?;
+    // db_manager.shutdown().await.unwrap();
 
     Ok(())
+}
+
+fn send_result(res_msg: ResMsg, conn_id: &Uuid, db_manager: &mut DbManager)
+{
+    // TODO: Add erorr handling here
+    db_manager.send_result(
+        conn_id, 
+        res_msg
+    ).unwrap();
+    db_manager.unregister(conn_id);
 }

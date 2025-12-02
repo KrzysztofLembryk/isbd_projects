@@ -1,67 +1,116 @@
-use crate::schemas::query::{
-    ShallowQuery, 
-    QueryStatus, 
-    Query, 
-    AllowedQuery, 
-    CopyQuery, 
-    SelectQuery,
-    ExecuteQueryRequest
-};
-use crate::schemas::error::{Error, Problem};
-use crate::db::db_manager::{SharedDbManager};
+use crate::db::manager::messages::{DbCmd, ResMsg};
+use crate::db::db_client::DbClient;
+use crate::routes::execute_db_cmd::execute_db_command;
+use crate::schemas::query::{ExecuteQueryRequest};
+use crate::schemas::error::{Error};
 use actix_web::{HttpResponse, Responder, get, post, web};
-use rand::random;
 use uuid::Uuid;
 
 #[get("/queries")]
 async fn get_queries(
-    db_manager: SharedDbManager
+    db_client: web::Data<tokio::sync::RwLock<DbClient>>
 ) -> impl Responder
 {
     println!("Fetching all QUERIES");
 
-    let manager = db_manager.read().await;
-    let queries = manager.get_queries();
+    let conn_id = Uuid::new_v4();
+    let mut rx_conn = execute_db_command(
+        &db_client, 
+        &conn_id,
+        DbCmd::GetQueries(conn_id)
+    ).await;
 
-    drop(manager);
+    // Simulate long await for data
+    let res = rx_conn.recv().await;
 
-    HttpResponse::Ok().json(queries)
+    return match res
+    {
+        Some(msg) =>{
+            match msg
+            {
+                ResMsg::ResQueries(Ok(queries)) => 
+                    HttpResponse::Ok()
+                        .json(queries),
+                ResMsg::ResQueries(Err(e)) => 
+                    HttpResponse::NotFound()
+                        .json(Error::new(&format!("{}", e))),
+                _ => HttpResponse::InternalServerError()
+                        .body("get_tables: got Wrong message from db"),
+            }
+        },
+        None => HttpResponse::InternalServerError().body("get_tables: db closed its side of channel, couldnt receive data from db")
+    };
 }
 
 #[get("/query/{query_id}")]
 async fn get_query_info(
     query_id: web::Path<Uuid>,
-    db_manager: SharedDbManager
+    db_client: web::Data<tokio::sync::RwLock<DbClient>>
 ) -> impl Responder
 {
     println!("Fetching query with id: {}", query_id);
 
-    let manager = db_manager.read().await;
-    let query_details = manager.get_query_details(&query_id);
+    let conn_id = Uuid::new_v4();
+    let mut rx_conn = execute_db_command(
+        &db_client, 
+        &conn_id,
+        DbCmd::GetQueryDetails(conn_id, *query_id)
+    ).await;
 
-    drop(manager);
+    // Simulate long await for data
+    let res = rx_conn.recv().await;
 
-    return match query_details
+    return match res
     {
-        Ok(q) => HttpResponse::Ok().json(q),
-        Err(e) => HttpResponse::NotFound().json(
-            Error::new(&format!("{}", e))
-        )
+        Some(msg) =>{
+            match msg
+            {
+                ResMsg::ResQueryDetails(Ok(queries)) => 
+                    HttpResponse::Ok()
+                        .json(queries),
+                ResMsg::ResQueryDetails(Err(e)) => 
+                    HttpResponse::NotFound()
+                        .json(Error::new(&format!("{}", e))),
+                _ => HttpResponse::InternalServerError()
+                        .body("get_tables: got Wrong message from db"),
+            }
+        },
+        None => HttpResponse::InternalServerError().body("get_tables: db closed its side of channel, couldnt receive data from db")
     };
 }
 
 #[post("/query")]
 async fn post_query(
     query: web::Json<ExecuteQueryRequest>,
-    db_manager: SharedDbManager
+    db_client: web::Data<tokio::sync::RwLock<DbClient>>
 ) -> impl Responder
 {
-    let id = match query.query_definition()
+    let conn_id = Uuid::new_v4();
+
+    let mut rx_conn = execute_db_command(
+        &db_client, 
+        &conn_id,
+        DbCmd::PostQuery(conn_id, query.query_definition())
+    ).await;
+
+    let res = rx_conn.recv().await;
+
+    return match res
     {
-        AllowedQuery::SELECT_Q(select_q) => "select_id",
-        AllowedQuery::COPY_Q(copy_q) => "copy_id",
+        Some(msg) =>{
+            match msg
+            {
+                ResMsg::ResPostQuery(Ok(id)) => 
+                    HttpResponse::Ok()
+                        .json(id),
+                ResMsg::ResPostQuery(Err(e)) => 
+                    HttpResponse::NotFound()
+                        .json(Error::new(&format!("{}", e))),
+                _ => HttpResponse::InternalServerError()
+                        .body("get_tables: got Wrong message from db"),
+            }
+        },
+        None => HttpResponse::InternalServerError().body("get_tables: db closed its side of channel, couldnt receive data from db")
     };
-    
-    HttpResponse::Ok().json(id)
 }
 

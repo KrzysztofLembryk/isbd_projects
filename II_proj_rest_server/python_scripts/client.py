@@ -4,11 +4,12 @@ import concurrent.futures
 import time
 
 SERVER_URL = "http://localhost:8080"
-TABLE_ID = "550e8400-e29b-41d4-a716-446655440000"
-NUM_REQUESTS = 50
+TABLE_ID = "8b689f56-15dd-4803-9232-8b1e9ac65269"
+NUM_REQUESTS = 10
 
 def send_request(request_id):
-    url = f"{SERVER_URL}/table/{TABLE_ID}"
+    # url = f"{SERVER_URL}/table/{TABLE_ID}"
+    url = f"{SERVER_URL}/tables"
     start = time.time()
     try:
         response = requests.get(url)
@@ -85,5 +86,6 @@ def sample_get_table_details():
 
 
 if __name__ == "__main__":
-    for i in range(1, 2):
-        sample_create_table(f"table_{i}")
+    sample_get_table_details()
+    # for i in range(1, 20):
+    #     sample_create_table(f"table_{i}")

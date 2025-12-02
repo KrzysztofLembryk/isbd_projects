@@ -4,7 +4,7 @@ use uuid::Uuid;
 use std::{fmt};
 use validator::{Validate}; //ValidationError
 
-#[derive(serde::Serialize, serde::Deserialize, Validate)]
+#[derive(serde::Serialize, serde::Deserialize, Validate, Debug)]
 pub struct TableSchema
 {
     #[validate(length(min=1, max=255))]
@@ -45,7 +45,7 @@ impl TableSchema
 
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub struct ShallowTable
 {
     #[serde(rename = "tableId")]
