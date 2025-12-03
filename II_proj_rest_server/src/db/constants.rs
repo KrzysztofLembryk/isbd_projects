@@ -35,6 +35,7 @@ pub const MAX_FILE_SIZE: u32 = u32::MAX
     - COLUMN_HEADER_METADATA_SIZE as u32;
 
 pub const MAX_ALLOWED_METADATA_CHANGES: u16 = 10;
+pub const MAX_DB_WORKERS: usize = 10;
 // ############################################################################
 // ############################ OTHER CONSTANTS ################################
 // ############################################################################

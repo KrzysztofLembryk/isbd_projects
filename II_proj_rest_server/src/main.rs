@@ -34,11 +34,15 @@ async fn main() -> std::io::Result<()>
     // and pass clones of given tables metadata, if these tasks will read data 
     // we can give them clone of channel to send data directly to the server Thread
 
+    // TODO: db_manager should be inside ENGINE struct, and here we should only
+    // run engine.start()
     let mut db_manager = 
         DbManager::new(DB_DATA_DIR, METADATA_FILE_PATH).await.unwrap();
 
     let (tx_db, mut rx_db) = unbounded_channel::<DbCmd>();
     let tx_db_clone = tx_db.clone();
+
+    db_manager.init_worker_manager(tx_db.clone());
 
     let db_task = tokio::spawn(async move {
             println!("SPAWNING DB TASK");

@@ -1,10 +1,10 @@
 use crate::db::storage::metadata::{DbMetadata, TableMetadata, TableId};
-use crate::db::constants::{LogicalColType, BATCH_SIZE, METADATA_FILE_PATH, MAX_ALLOWED_METADATA_CHANGES};
+use crate::db::constants::{MAX_DB_WORKERS};
 use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryStatus, SelectQuery, ShallowQuery};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::errors::DbError;
-use crate::db::manager::messages::{DbMaintenanceMsg, ResMsg};
-use crate::db::manager::metadata_saver::{DbMaintenanceTask};
+use crate::db::manager::messages::{DbMaintenanceMsg, ResMsg, DbCmd};
+use crate::db::manager::workers_manager::WorkersManager;
 
 use uuid::Uuid;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
@@ -96,7 +96,7 @@ pub struct DbManager
     db_meta: Option<DbMetadata>,
     query_store: QueryStore,
     paths: DbPaths,
-    metadata_saver: DbMaintenanceTask,
+    workers_manager: Option<WorkersManager>,
     tx_server_channels: HashMap<Uuid, UnboundedSender<ResMsg>>
 }
 
@@ -112,13 +112,25 @@ impl DbManager
             db_meta: None,
             query_store: QueryStore::new(),
             paths: DbPaths::new(metadata_file_path, db_data_dir_path),
-            metadata_saver: DbMaintenanceTask::spawn(db_data_dir_path),
+            workers_manager: None, 
             tx_server_channels: HashMap::new(),
         };
 
         db_manager.init_metadata().await?;
 
         Ok(db_manager)
+    }
+
+    pub fn init_worker_manager(
+        &mut self,
+        tx_to_db: UnboundedSender<DbCmd>
+    )
+    {
+        self.workers_manager = Some(WorkersManager::new(
+            &self.paths.data_dir_path, 
+            MAX_DB_WORKERS, 
+            tx_to_db)
+        );
     }
 
     // ########################################################################
@@ -317,7 +329,7 @@ impl DbManager
     async fn perform_shutdown(self) -> Result<(), DbError>
     {
         self.notify_db_maintenance_background_task(DbMaintenanceMsg::Shutdown)?;
-        match self.metadata_saver.await_task().await
+        match self.workers_manager.await_task().await
         {
             Ok(()) => Ok(()),
             Err(e) => Err(DbError::Other(format!("error: {}", e)))
@@ -329,7 +341,7 @@ impl DbManager
         msg: DbMaintenanceMsg
     ) -> Result<(), DbError> 
     {
-        self.metadata_saver.send_msg(msg)
+        self.workers_manager.send_msg(msg)
     }
 
     async fn init_metadata(&mut self) -> Result<(), DbError>

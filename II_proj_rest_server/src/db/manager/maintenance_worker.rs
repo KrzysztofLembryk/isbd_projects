@@ -6,20 +6,20 @@ use std::fmt::format;
 use std::path::Path;
 use uuid::Uuid;
 use tokio::{sync::mpsc::{UnboundedSender, unbounded_channel}, task::JoinError};
-pub struct DbMaintenanceTask
+pub struct MaintenanceWorker
 {
     tx: UnboundedSender<DbMaintenanceMsg>,
     handle: tokio::task::JoinHandle<()>,
 }
 
-impl DbMaintenanceTask
+impl MaintenanceWorker
 {
     pub fn new(
         tx: UnboundedSender<DbMaintenanceMsg>,
         handle: tokio::task::JoinHandle<()>
-    ) -> DbMaintenanceTask
+    ) -> MaintenanceWorker
     {
-        DbMaintenanceTask {tx, handle}
+        MaintenanceWorker {tx, handle}
     }
 
     pub fn send_msg(&self, msg: DbMaintenanceMsg) -> Result<(), DbError>
@@ -32,7 +32,7 @@ impl DbMaintenanceTask
     }
     /// Function spawns new task that saves, received by msg, metadata to file
     /// It returns MetadataSaver that stores task handle and channel transmitter
-    pub fn spawn(db_data_dir_path: &str) -> DbMaintenanceTask
+    pub fn spawn(db_data_dir_path: &str) -> MaintenanceWorker
     {
         let (tx, mut rx) = unbounded_channel::<DbMaintenanceMsg>();
         let path = String::from(db_data_dir_path);
@@ -50,19 +50,20 @@ impl DbMaintenanceTask
                         },
                         Some(DbMaintenanceMsg::DeleteTable(table_meta)
                         ) => {
+                            // TODO: add error handling
                             delete_dir_with_contents(
                                 &create_dir_path(
                                     &db_data_dir_path, 
                                     table_meta.table_id(), 
                                     table_meta.table_name())
-                            ).await;
+                            ).await.unwrap();
                         },
                         None => {break;}
                     }
                 }
             }
         );                    
-        DbMaintenanceTask::new(tx, saver_task_handle)
+        MaintenanceWorker::new(tx, saver_task_handle)
     }
 
     pub async fn await_task(self) -> Result<(), JoinError>
