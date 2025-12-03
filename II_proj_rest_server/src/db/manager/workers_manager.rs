@@ -4,7 +4,7 @@ use uuid::Uuid;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use crate::db::{errors::DbError, manager::{
-    messages::{DbCmd, DbWorkerMsg}, 
+    messages::{DbCmd, DbWorkerMsg, DbMaintenanceMsg}, 
     maintenance_worker::MaintenanceWorker}};
 use crate::db::manager::query_worker::QueryWorker;
 
@@ -69,6 +69,39 @@ impl WorkersManager
         Ok(None)
     }
 
+    pub fn notify_maintenance_worker(
+        &self, 
+        msg: DbMaintenanceMsg
+    ) -> Result<(), DbError> 
+    {
+        self.maintenance_worker.send_msg(msg)
+    }
+
+    /// Method **consumes self** !!!
+    pub async fn shutdown(self) -> Result<(), DbError> 
+    {
+        self.notify_all_workers_about_shutdown()?;
+        self.maintenance_worker.await_task().await;
+
+        for (_, handler) in self.query_workers
+        {
+            handler.handle.await;
+        }
+
+        Ok(())
+    }
+
+    fn notify_all_workers_about_shutdown(&self) -> Result<(), DbError>
+    {
+        self.notify_maintenance_worker(DbMaintenanceMsg::Shutdown)?;
+
+        for (_, handler) in &self.query_workers
+        {
+            handler.send_msg(DbWorkerMsg::Shutdown)?;
+        }
+        Ok(())
+    }
+
     fn take_available_worker(&mut self) -> Option<usize>
     {
         if let Some(&id) = self.available_workers.iter().next() 
@@ -108,7 +141,7 @@ impl QueryWorkerHandler
         self.tx
             .send(msg)
             .map_err(|e| DbError::InternalDbError(
-                format!("Worker::send_msg failed to send message to task: {}", e)
+                format!("QueryWorker::send_msg failed to send message to task: {}", e)
             ))
     }
 }

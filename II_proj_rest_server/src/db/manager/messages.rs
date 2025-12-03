@@ -17,7 +17,7 @@ pub enum DbCmd
 
 pub enum DbWorkerMsg
 {
-
+    Shutdown
 }
 
 pub enum DbClientMsg

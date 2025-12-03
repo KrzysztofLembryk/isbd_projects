@@ -96,41 +96,33 @@ pub struct DbManager
     db_meta: Option<DbMetadata>,
     query_store: QueryStore,
     paths: DbPaths,
-    workers_manager: Option<WorkersManager>,
+    workers_manager: WorkersManager,
     tx_server_channels: HashMap<Uuid, UnboundedSender<ResMsg>>
 }
 
 impl DbManager
 {
     pub async fn new(
+        tx_to_db: UnboundedSender<DbCmd>,
         db_data_dir_path: &str, 
         metadata_file_path: &str
     ) -> Result<DbManager, DbError>
     {
         println!("metadata file path: {}, db_data_dir_path: {}", metadata_file_path, db_data_dir_path);
+
         let mut db_manager = DbManager{
             db_meta: None,
             query_store: QueryStore::new(),
             paths: DbPaths::new(metadata_file_path, db_data_dir_path),
-            workers_manager: None, 
+            workers_manager: WorkersManager::new(
+                db_data_dir_path, MAX_DB_WORKERS, tx_to_db), 
             tx_server_channels: HashMap::new(),
         };
 
+        // TODO: this should be inside DbMangaer, thus db_meta shouldnt be Option
         db_manager.init_metadata().await?;
 
         Ok(db_manager)
-    }
-
-    pub fn init_worker_manager(
-        &mut self,
-        tx_to_db: UnboundedSender<DbCmd>
-    )
-    {
-        self.workers_manager = Some(WorkersManager::new(
-            &self.paths.data_dir_path, 
-            MAX_DB_WORKERS, 
-            tx_to_db)
-        );
     }
 
     // ########################################################################
@@ -202,7 +194,7 @@ impl DbManager
             let db_meta_clone = db_meta.clone();
 
             db_meta.reset_changes();
-            self.notify_db_maintenance_background_task(
+            self.workers_manager.notify_maintenance_worker(
                 DbMaintenanceMsg::SaveMetadata(db_meta_clone)
             )?;
         }
@@ -297,7 +289,7 @@ impl DbManager
     {
         self.save_metadata()?;
         self.perform_shutdown().await?;
-        // TODO: await for tasks
+
         Ok(())
     }
 
@@ -310,17 +302,18 @@ impl DbManager
         t_meta: TableMetadata
     ) -> Result<(), DbError> 
     {
-        self.notify_db_maintenance_background_task(
+        return self.workers_manager.notify_maintenance_worker(
             DbMaintenanceMsg::DeleteTable(t_meta)
-        )
+        );
     }
 
     fn save_metadata(&self) -> Result<(), DbError>
     {
         if let Some(meta) = &self.db_meta
         {
-            self.notify_db_maintenance_background_task(DbMaintenanceMsg::SaveMetadata(meta.clone()))?;
-            return Ok(());
+            return self.workers_manager.notify_maintenance_worker(
+                DbMaintenanceMsg::SaveMetadata(meta.clone())
+            );
         }
 
         Err(DbError::NotFound(format!("DbManager::put_table: database was not initialized")))
@@ -328,20 +321,7 @@ impl DbManager
 
     async fn perform_shutdown(self) -> Result<(), DbError>
     {
-        self.notify_db_maintenance_background_task(DbMaintenanceMsg::Shutdown)?;
-        match self.workers_manager.await_task().await
-        {
-            Ok(()) => Ok(()),
-            Err(e) => Err(DbError::Other(format!("error: {}", e)))
-        }
-    }
-
-    fn notify_db_maintenance_background_task(
-        &self, 
-        msg: DbMaintenanceMsg
-    ) -> Result<(), DbError> 
-    {
-        self.workers_manager.send_msg(msg)
+        self.workers_manager.shutdown().await
     }
 
     async fn init_metadata(&mut self) -> Result<(), DbError>
