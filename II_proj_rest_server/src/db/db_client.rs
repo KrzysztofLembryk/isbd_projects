@@ -1,4 +1,4 @@
-use crate::db::manager::messages::{DbCmd, ResMsg};
+use crate::db::manager::messages::{DbClientMsg, ResMsg, DbCmd};
 use uuid::Uuid;
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
 use tokio::sync::mpsc::error::SendError;
@@ -21,9 +21,9 @@ impl DbClient
         DbClient { thread_id, tx_db: db_tx, rx_server }
     }
 
-    pub fn send_msg(&self, msg: DbCmd) -> Result<(), SendError<DbCmd>>
+    pub fn send_msg(&self, msg: DbClientMsg) -> Result<(), SendError<DbCmd>>
     {
-        self.tx_db.send(msg)
+        self.tx_db.send(DbCmd::Client(msg))
     }
 
     pub async fn recv_msg(&mut self) -> Result<ResMsg, String>

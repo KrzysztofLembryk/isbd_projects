@@ -2,7 +2,7 @@ use crate::db::db_client::DbClient;
 use crate::db::storage::metadata::TableId;
 use crate::schemas::table::{TableSchema};
 use crate::schemas::error::{Error};
-use crate::db::manager::messages::{DbCmd, ResMsg};
+use crate::db::manager::messages::{DbClientMsg, ResMsg};
 use crate::routes::execute_db_cmd::execute_db_command;
 
 use actix_web::{HttpResponse, Responder, delete, get, put, web};
@@ -22,7 +22,7 @@ async fn get_tables(
     let mut rx_conn = execute_db_command(
         &db_client, 
         &conn_id,
-        DbCmd::GetTables(conn_id)
+        DbClientMsg::GetTables(conn_id)
     ).await;
 
     // Simulate long await for data
@@ -60,7 +60,7 @@ async fn get_table_details(
     let mut rx_conn = execute_db_command(
         &db_client, 
         &conn_id,
-        DbCmd::GetTableDetails(conn_id, *table_id)
+        DbClientMsg::GetTableDetails(conn_id, *table_id)
     ).await;
 
     sleep(Duration::from_secs(10)).await;
@@ -92,23 +92,13 @@ async fn delete_table(
     db_client: web::Data<tokio::sync::RwLock<DbClient>>,
 ) -> impl Responder
 {
-    // We will get write for db_manager, firstly we will set flag that this 
-    // table is to be deleted, so that UPCOMING tables/queries requests will 
-    // not be able to see and operate on this table
-    // We will have hashmap - 
-    //  {
-    //      table_name/id: (delete_flag, n_queries_operating_on_table)
-    //  }
-    // For every query we will spawn task, that will communicate with db_manager
-    // via channels, 
-    // We will spawn another TASK before running server
-    println!("Fetching table with id: {}", table_id);
+    println!("Deleting table with id: {}", table_id);
 
     let conn_id = Uuid::new_v4();
     let mut rx_conn = execute_db_command(
         &db_client, 
         &conn_id,
-        DbCmd::DeleteTable(conn_id, *table_id)
+        DbClientMsg::DeleteTable(conn_id, *table_id)
     ).await;
     let res = rx_conn.recv().await;
 
@@ -142,7 +132,7 @@ async fn put_table(
     let mut rx_conn = execute_db_command(
         &db_client, 
         &conn_id,
-        DbCmd::PutTable(conn_id, table_schema.into_inner())
+        DbClientMsg::PutTable(conn_id, table_schema.into_inner())
     ).await;
     let res = rx_conn.recv().await;
 

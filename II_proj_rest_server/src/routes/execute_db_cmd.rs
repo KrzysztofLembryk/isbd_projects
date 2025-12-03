@@ -1,5 +1,5 @@
 use crate::db::db_client::DbClient;
-use crate::db::manager::messages::{DbCmd, ResMsg};
+use crate::db::manager::messages::{DbClientMsg, ResMsg};
 
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 use uuid::Uuid;
@@ -8,7 +8,7 @@ use actix_web::{web};
 pub async fn execute_db_command(
     db_client: &web::Data<tokio::sync::RwLock<DbClient>>,
     conn_id: &Uuid,
-    msg: DbCmd,
+    msg: DbClientMsg,
 ) -> UnboundedReceiver<ResMsg>
 {
     // TODO: add correct error handling
@@ -17,7 +17,7 @@ pub async fn execute_db_command(
     let client_lock = db_client.read().await;
 
     client_lock
-        .send_msg(DbCmd::Register(conn_id.clone(), tx_conn)).unwrap();
+        .send_msg(DbClientMsg::Register(conn_id.clone(), tx_conn)).unwrap();
     client_lock
         .send_msg(msg).unwrap();
 

@@ -3,11 +3,17 @@ use II_proj_rest_server::routes::queries::{get_queries, get_query_info, post_que
 use II_proj_rest_server::db::constants::{DB_DATA_DIR, METADATA_FILE_PATH};
 use actix_web::{App, HttpServer, web};
 use II_proj_rest_server::db::manager::db_manager::{DbManager};
-use II_proj_rest_server::db::manager::messages::{DbCmd, ResMsg};
+use II_proj_rest_server::db::manager::messages::{DbClientMsg, DbCmd, ResMsg};
 use II_proj_rest_server::db::db_client::DbClient;
 
 use tokio::sync::mpsc::{unbounded_channel};
 use uuid::Uuid;
+
+enum BreakMsg
+{
+    DoBreak,
+    NoMsg
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()>
@@ -42,100 +48,27 @@ async fn main() -> std::io::Result<()>
                 match rx_db.recv().await
                 {
                     Some(DbCmd::Shutdown) => {
-                        println!("\n##############\nDB GOT SHUTDOWN\n##############");
+                        println!("\n##########\nDB GOT SHUTDOWN\n##########");
+
                         db_manager.shutdown().await.unwrap();
+
                         break;
                     },
-                    Some(DbCmd::Register(id, tx)) => {
-                        db_manager.register(&id, tx);
-                    }
-                    Some(DbCmd::GetTables(conn_id)) => {
-                        let res = db_manager.get_tables();
-
-                        send_result(
-                            ResMsg::ResTables(res), 
-                            &conn_id, 
-                            &mut db_manager
-                        );
-                    }
-                    Some(DbCmd::GetTableDetails(conn_id, id)) => {
-                        let res = db_manager.get_table_details(&id);
-
-                        send_result(
-                            ResMsg::ResTableDetails(res), 
-                            &conn_id, 
-                            &mut db_manager
-                        );
-                    },
-                    Some(DbCmd::DeleteTable(conn_id, table_id)) => {
-                        let res = db_manager.mark_table_to_delete(&table_id);
-
-                        match db_manager.delete_table(&table_id)
+                    Some(DbCmd::Client(msg)) => {
+                        match handle_client_cmd(msg, &mut db_manager).await
                         {
-                            Ok(t_meta) => {
-                                // No queries running on table, so we can 
-                                // schedule table deletion
-                                let res = db_manager
-                                            .schedule_table_deletion(t_meta);
-                                send_result(
-                                    ResMsg::ResDeleteTable(res), 
-                                    &conn_id, 
-                                    &mut db_manager
-                                );
+                            BreakMsg::DoBreak => {
+                                break;
                             },
-                            Err(e) => {
-                                // This means we cannot yet delete table, since
-                                // there are some queries running on it
-                                println!("DbTask::DeleteTable: {}", e);
-                                send_result(
-                                    ResMsg::ResDeleteTable(res), 
-                                    &conn_id, 
-                                    &mut db_manager
-                                );
-                            }
+                            _ => ()
                         }
                     },
-                    Some(DbCmd::PutTable(conn_id, table_schema)) => {
-                        let res = db_manager.put_table(&table_schema);
+                    Some(DbCmd::DbWorker(msg)) => {
 
-                        send_result(
-                            ResMsg::ResPutTable(res),
-                            &conn_id, 
-                            &mut db_manager
-                        );
                     },
-                    Some(DbCmd::GetQueries(conn_id)) => {
-                        let res = db_manager.get_queries();
-
-                        send_result(
-                            ResMsg::ResQueries(res),
-                            &conn_id, 
-                            &mut db_manager
-                        );
-                    },
-                    Some(DbCmd::GetQueryDetails(conn_id, query_id)) =>
-                    {
-                        let res = db_manager
-                            .get_query_details(&query_id);
-
-                        send_result(
-                            ResMsg::ResQueryDetails(res),
-                            &conn_id, 
-                            &mut db_manager
-                        );
-                    },
-                    Some(DbCmd::PostQuery(conn_id, q)) => {
-                        let res = db_manager
-                            .post_query(q);
-
-                        send_result(
-                            ResMsg::ResPostQuery(res),
-                            &conn_id, 
-                            &mut db_manager
-                        );
-                    }
                     None => {
-                        println!("Channel closed, breaking");
+                        println!("Db task - rx_dv.recv channel was closed");
+                        // TODO: shutdown of db, db workers etc
                         break;
                     }
                 }
@@ -148,7 +81,10 @@ async fn main() -> std::io::Result<()>
         let id = Uuid::new_v4();
         let db_tx = tx_db.clone();
         let (tx_thread, rx_thread) = unbounded_channel::<ResMsg>();
-        db_tx.send(DbCmd::Register(id.clone(), tx_thread)).unwrap();
+        db_tx.send(DbCmd::Client(
+                    DbClientMsg::Register(id.clone(), tx_thread)
+                )
+            ).unwrap();
 
         let db_client = DbClient::new(id, db_tx, rx_thread);
 
@@ -182,4 +118,103 @@ fn send_result(res_msg: ResMsg, conn_id: &Uuid, db_manager: &mut DbManager)
         res_msg
     ).unwrap();
     db_manager.unregister(conn_id);
+}
+
+async fn handle_client_cmd(
+    client_msg: DbClientMsg, 
+    db_manager: &mut DbManager
+) -> BreakMsg
+{
+    match client_msg
+    {
+        DbClientMsg::Register(id, tx) => {
+            db_manager.register(&id, tx);
+        }
+        DbClientMsg::GetTables(conn_id) => {
+            let res = db_manager.get_tables();
+
+            send_result(
+                ResMsg::ResTables(res), 
+                &conn_id, 
+                db_manager
+            );
+        }
+        DbClientMsg::GetTableDetails(conn_id, id) => {
+            let res = db_manager.get_table_details(&id);
+
+            send_result(
+                ResMsg::ResTableDetails(res), 
+                &conn_id, 
+                db_manager
+            );
+        },
+        DbClientMsg::DeleteTable(conn_id, table_id) => {
+            let res = db_manager.mark_table_to_delete(&table_id);
+
+            match db_manager.delete_table(&table_id)
+            {
+                Ok(t_meta) => {
+                    // No queries running on table, so we can 
+                    // schedule table deletion
+                    let res = db_manager
+                                .schedule_table_deletion(t_meta);
+                    send_result(
+                        ResMsg::ResDeleteTable(res), 
+                        &conn_id, 
+                        db_manager
+                    );
+                },
+                Err(e) => {
+                    // This means we cannot yet delete table, since
+                    // there are some queries running on it
+                    println!("DbTask::DeleteTable: {}", e);
+                    send_result(
+                        ResMsg::ResDeleteTable(res), 
+                        &conn_id, 
+                        db_manager
+                    );
+                }
+            }
+        },
+        DbClientMsg::PutTable(conn_id, table_schema) => {
+            let res = db_manager.put_table(&table_schema);
+
+            send_result(
+                ResMsg::ResPutTable(res),
+                &conn_id, 
+                db_manager
+            );
+        },
+        DbClientMsg::GetQueries(conn_id) => {
+            let res = db_manager.get_queries();
+
+            send_result(
+                ResMsg::ResQueries(res),
+                &conn_id, 
+                db_manager
+            );
+        },
+        DbClientMsg::GetQueryDetails(conn_id, query_id) => {
+            let res = db_manager
+                .get_query_details(&query_id);
+
+            send_result(
+                ResMsg::ResQueryDetails(res),
+                &conn_id, 
+                db_manager
+            );
+        },
+        DbClientMsg::PostQuery(conn_id, q) => {
+            let res = db_manager
+                .post_query(q);
+
+            send_result(
+                ResMsg::ResPostQuery(res),
+                &conn_id, 
+                db_manager
+            );
+        }
+    }
+
+    return BreakMsg::NoMsg;
 }

@@ -1,4 +1,4 @@
-use crate::db::manager::messages::{DbCmd, ResMsg};
+use crate::db::manager::messages::{DbClientMsg, ResMsg};
 use crate::db::db_client::DbClient;
 use crate::routes::execute_db_cmd::execute_db_command;
 use crate::schemas::query::{ExecuteQueryRequest};
@@ -19,7 +19,7 @@ async fn get_queries(
     let mut rx_conn = execute_db_command(
         &db_client, 
         &conn_id,
-        DbCmd::GetQueries(conn_id)
+        DbClientMsg::GetQueries(conn_id)
     ).await;
 
     // Simulate long await for data
@@ -56,7 +56,7 @@ async fn get_query_info(
     let mut rx_conn = execute_db_command(
         &db_client, 
         &conn_id,
-        DbCmd::GetQueryDetails(conn_id, *query_id)
+        DbClientMsg::GetQueryDetails(conn_id, *query_id)
     ).await;
 
     // Simulate long await for data
@@ -92,7 +92,7 @@ async fn post_query(
     let mut rx_conn = execute_db_command(
         &db_client, 
         &conn_id,
-        DbCmd::PostQuery(conn_id, query.query_definition())
+        DbClientMsg::PostQuery(conn_id, query.query_definition())
     ).await;
 
     let res = rx_conn.recv().await;

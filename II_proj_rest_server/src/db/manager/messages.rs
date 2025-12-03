@@ -8,8 +8,19 @@ use tokio::sync::mpsc::{UnboundedSender};
 /// Conn means Connection
 type ConnId = Uuid;
 
-/// Db Command
 pub enum DbCmd
+{
+    Client(DbClientMsg),
+    DbWorker(DbWorkerMsg),
+    Shutdown,
+}
+
+pub enum DbWorkerMsg
+{
+
+}
+
+pub enum DbClientMsg
 {
     Register(ConnId, UnboundedSender<ResMsg>),
     GetTables(ConnId),
@@ -19,7 +30,6 @@ pub enum DbCmd
     GetQueries(ConnId),
     GetQueryDetails(ConnId, Uuid),
     PostQuery(ConnId, AllowedQuery),
-    Shutdown,
 }
 
 pub enum ResMsg
@@ -31,10 +41,8 @@ pub enum ResMsg
     ResQueries(Result<Vec<ShallowQuery>, DbError>),
     ResQueryDetails(Result<Query, DbError>),
     ResPostQuery(Result<Uuid, DbError>),
-
 }
 
-type DirPath = String;
 pub enum DbMaintenanceMsg
 {
     SaveMetadata(DbMetadata),
