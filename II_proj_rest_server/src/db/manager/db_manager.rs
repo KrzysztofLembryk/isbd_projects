@@ -1,26 +1,16 @@
-use crate::db::storage::metadata::{DbMetadata, TableMetadata, TableId};
+use crate::db::storage::metadata::{DbMetadata, TableMetadata};
 use crate::db::constants::{MAX_DB_WORKERS};
 use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryStatus, SelectQuery, ShallowQuery};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::errors::DbError;
 use crate::db::manager::messages::{DbMaintenanceMsg, ResMsg, DbCmd};
-use crate::db::manager::workers_manager::WorkersManager;
+use crate::db::manager::db_workers::workers_manager::WorkersManager;
+use crate::db::manager::query_store::QueryStore;
 
 use uuid::Uuid;
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{UnboundedSender};
 use std::io::ErrorKind as err_kind;
 use std::collections::HashMap;
-use actix_web::{web};
-
-pub type SharedDbManager = web::Data<tokio::sync::RwLock<DbManager>>;
-
-
-// Separate Db task running in the background
-// When wanting table data endpoint sends msg to DB task and awaits response
-// When wanting quries details -||-
-// When submitting new query endpoint sends message, DB task creates task that
-// will handle this query and will wait for its execution (query task will send messages to db so that db can change query status)
-// Basically we will do an executor system 
 
 struct DbPaths
 {
@@ -42,55 +32,6 @@ impl DbPaths
     }
 }
 
-struct QueryStore
-{
-    queries: HashMap<Uuid, Query>,
-    query_queue: Vec<Uuid>, // stores order of queries to be executed
-}
-
-impl QueryStore
-{
-    pub fn new() -> QueryStore
-    {
-        QueryStore { queries: HashMap::new(), query_queue: Vec::new() }
-    }
-
-    pub fn queries(&self) -> &HashMap<Uuid, Query>
-    {
-        &self.queries
-    }
-
-    pub fn push_query(&mut self, q: Query) -> Result<(), DbError>
-    {
-        let q_id = q.id().clone();
-
-        if self.queries.contains_key(&q_id)
-        {
-            return Err(DbError::Other(format!("QueryStore::push_query: Query with id: {} already exists", q_id)));
-        }
-        // TODO: add check if query already exists
-        // and if we have enough space in vector
-        self.queries.insert(q_id.clone(), q);
-        self.query_queue.push(q_id);    
-
-        Ok(())
-    }
-
-    pub fn update_query_status(
-        &mut self, 
-        q_id: &Uuid, 
-        new_status: QueryStatus
-    ) -> Result<(), DbError>
-    {
-        if let Some(q) = self.queries.get_mut(q_id)
-        {
-            q.update_status(new_status);
-            return Ok(());
-        }
-        Err(DbError::NotFound(format!("QueryStore::update_query_status: query with id: '{}'", q_id)))
-    }
-}
-
 pub struct DbManager
 {
     db_meta: Option<DbMetadata>,
@@ -108,8 +49,6 @@ impl DbManager
         metadata_file_path: &str
     ) -> Result<DbManager, DbError>
     {
-        println!("metadata file path: {}, db_data_dir_path: {}", metadata_file_path, db_data_dir_path);
-
         let mut db_manager = DbManager{
             db_meta: None,
             query_store: QueryStore::new(),
@@ -227,13 +166,50 @@ impl DbManager
 
     pub fn post_query(&mut self, query: AllowedQuery) -> Result<Uuid, DbError>
     {
-        // Will add query to db_manager query map
-        // Will spawn task that handles query
-        match query
+        let db_meta = self.db_meta
+                .as_mut()
+                .ok_or_else(|| DbError::NotFound("DbManager::put_table: database was not initialized".to_string()
+        ))?;
+
+        match db_meta.authorize_query(&query)
         {
-            AllowedQuery::COPY_Q(q) => self.handle_copy_query(&q),
-            AllowedQuery::SELECT_Q(q) => self.handle_select_query(&q),
+            Ok(_) => (),
+            Err(e) => {
+                let mut new_query = Query::new(
+                    query
+                );
+                new_query.update_status(QueryStatus::FAILED);
+                self.query_store.insert_query(new_query)?;
+
+                return Err(e);
+            }
         }
+
+        let new_query = Query::new(
+            query
+        );
+
+        self.query_store.schedule_for_execution(new_query.id());
+        self.query_store.insert_query(new_query)?;
+
+        if self.workers_manager.is_any_worker_available()
+        {
+            // TODO: Add proper error handling
+            // We should always get Some since above we've just scheduled query
+            // for execution
+            let pending_q = self.query_store.pop_pending_query().unwrap();
+            db_meta.plan_query_execution(pending_q);
+        }
+        else 
+        {
+        }
+
+
+        // match query
+        // {
+        //     AllowedQuery::CopyQ(q) => self.handle_copy_query(&q),
+        //     AllowedQuery::SelectQ(q) => self.handle_select_query(&q),
+        // }
         todo!("implement post_query")
     }
 

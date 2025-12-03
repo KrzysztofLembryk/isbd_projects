@@ -3,10 +3,10 @@ use tokio::io::Join;
 use uuid::Uuid;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use crate::db::{errors::DbError, manager::{
-    messages::{DbCmd, DbWorkerMsg, DbMaintenanceMsg}, 
-    maintenance_worker::MaintenanceWorker}};
-use crate::db::manager::query_worker::QueryWorker;
+use crate::db::errors::DbError;
+use crate::db::manager::messages::{DbCmd, DbWorkerMsg, DbMaintenanceMsg};
+use crate::db::manager::db_workers::maintenance_worker::MaintenanceWorker;
+use crate::db::manager::db_workers::query_worker::QueryWorker;
 
 pub struct WorkersManager
 {
@@ -69,6 +69,11 @@ impl WorkersManager
         Ok(None)
     }
 
+    pub fn is_any_worker_available(&self) -> bool
+    {
+        !self.available_workers.is_empty()
+    }
+
     pub fn notify_maintenance_worker(
         &self, 
         msg: DbMaintenanceMsg
@@ -91,6 +96,9 @@ impl WorkersManager
         Ok(())
     }
 
+    // ########################################################################
+    // ########################### PRIVATE METHODS ############################
+    // ########################################################################
     fn notify_all_workers_about_shutdown(&self) -> Result<(), DbError>
     {
         self.notify_maintenance_worker(DbMaintenanceMsg::Shutdown)?;

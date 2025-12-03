@@ -1,12 +1,13 @@
 use crate::db::errors::DbError;
 use crate::db::storage::metadata::{DbMetadata, TableMetadata};
 use crate::schemas::table::{ShallowTable, TableSchema};
-use crate::schemas::query::{AllowedQuery, Query, ShallowQuery};
+use crate::schemas::query::{AllowedQuery, CopyQuery, Query, SelectQuery, ShallowQuery};
 use uuid::Uuid;
 use tokio::sync::mpsc::{UnboundedSender};
 
 /// Conn means Connection
 type ConnId = Uuid;
+type WorkerId = usize;
 
 pub enum DbCmd
 {
@@ -17,6 +18,8 @@ pub enum DbCmd
 
 pub enum DbWorkerMsg
 {
+    DoSelectQuery(WorkerId, SelectQInfo),
+    DoCopyQuery(WorkerId, CopyQInfo),
     Shutdown
 }
 
@@ -48,4 +51,16 @@ pub enum DbMaintenanceMsg
     SaveMetadata(DbMetadata),
     DeleteTable(TableMetadata),
     Shutdown
+}
+
+// TODO: move below struct implementation to separate file 
+struct SelectQInfo
+{
+    table_name: String,
+    
+}
+
+struct CopyQInfo
+{
+
 }

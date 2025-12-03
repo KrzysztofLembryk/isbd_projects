@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::vec;
-use actix_web::guard::Delete;
 use regex::Regex;
 use serde;
 use serde_json;
@@ -12,6 +11,7 @@ use tokio::fs as t_fs;
 use crate::db::errors::{DbError};
 use crate::db::constants::{MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX, MAX_ALLOWED_METADATA_CHANGES};
 use crate::schemas::table::{TableSchema, ShallowTable};
+use crate::schemas::query::{AllowedQuery, QueryTableName, Query};
 use crate::schemas::column::{Column};
 
 #[cfg(test)]
@@ -232,6 +232,7 @@ impl DbMetadata
 
             let t_meta = self.tables_metadata.remove(table_id).unwrap();
             self.tables_states.remove(table_id);
+            self.table_name_to_id_map.remove(t_meta.table_name());
 
             return Ok(t_meta);
         }
@@ -277,6 +278,41 @@ impl DbMetadata
         self.nbr_of_metadata_changes += 1;
 
         Ok(table_id)
+    }
+
+    pub fn plan_query_execution(&self, q: &Query)
+    {
+        let q_id = q.id();        
+        let table_name = q.table_name();
+    }
+
+    pub fn authorize_query(
+        &mut self, 
+        query: &impl QueryTableName
+    ) -> Result<(), DbError>
+    {
+        let table_name = query.table_name();
+
+        if let Some(table_id) = self.table_name_to_id_map
+                                    .get(table_name)
+        {
+            // In put_table and delete_table we either insert or remove
+            // given table from ALL maps, so this should always be ok
+            if let Some(t_state) = self.tables_states.get_mut(&table_id)
+            {
+                if t_state.delete_flag == DeleteFlag::NoDelete
+                {
+                    t_state.n_queries_operating_on_table += 1;
+
+                    return Ok(());
+                }
+
+                return Err(DbError::NotFound(format!("SELECT query for table: '{}' ABORTED, such table does not exist in db", table_name)));
+            }
+
+            return Err(DbError::InternalDbError(format!("SELECT query for table: '{}' ABORTED, such table exists in table_name_to_id_map BUT NOT in tables_states, DB CORRUPTED", table_name)));
+        }
+        return Err(DbError::NotFound(format!("SELECT query for table: '{}' ABORTED, such table does not exist in db", table_name)));
     }
 
     pub fn is_enough_changes(&self) -> bool

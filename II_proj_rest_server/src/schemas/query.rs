@@ -16,8 +16,8 @@ pub enum QueryStatus
 #[derive(Clone, serde::Deserialize)]
 pub enum AllowedQuery
 {
-    SELECT_Q(SelectQuery),
-    COPY_Q(CopyQuery)
+    SelectQ(SelectQuery),
+    CopyQ(CopyQuery)
 }
 
 // We need to implement serialization since we dont want our response to contain
@@ -30,8 +30,8 @@ impl Serialize for AllowedQuery
     {
         match self     
         {
-            AllowedQuery::COPY_Q(q) => q.serialize(serializer),
-            AllowedQuery::SELECT_Q(q) => q.serialize(serializer),
+            AllowedQuery::CopyQ(q) => q.serialize(serializer),
+            AllowedQuery::SelectQ(q) => q.serialize(serializer),
         }
     }
 }
@@ -70,17 +70,14 @@ pub struct Query
 impl Query
 {
     pub fn new(
-        status: QueryStatus, 
-        is_res_available: bool, 
         query_definition: AllowedQuery
     ) -> Query
     {
-        let new_uuid = Uuid::new_v4();
-
+        let query_id = Uuid::new_v4();
         Query { 
-            query_id: new_uuid, 
-            status: status, 
-            is_res_available: is_res_available, 
+            query_id, 
+            status: QueryStatus::CREATED, 
+            is_res_available: false, 
             query_definition 
         }
     }
@@ -93,6 +90,11 @@ impl Query
     pub fn status(&self) -> QueryStatus
     {
         self.status.clone()
+    }
+
+    pub fn table_name(&self) -> &str
+    {
+        self.query_definition.table_name()
     }
 
     pub fn update_status(&mut self, new_status: QueryStatus)
@@ -157,7 +159,39 @@ impl SelectQuery
     {
         SelectQuery{table_name: String::from(table_name)}
     }
+
+    pub fn table_name(&self) -> &str
+    {
+        &self.table_name
+    }
 }
+
+pub trait QueryTableName {
+    fn table_name(&self) -> &str;
+}
+
+impl QueryTableName for CopyQuery {
+    fn table_name(&self) -> &str {
+        &self.dest_table_name
+    }
+}
+
+impl QueryTableName for SelectQuery {
+    fn table_name(&self) -> &str {
+        &self.table_name
+    }
+}
+
+impl QueryTableName for AllowedQuery {
+    fn table_name(&self) -> &str {
+        match self {
+            AllowedQuery::SelectQ(q) => q.table_name(),
+            AllowedQuery::CopyQ(q) => q.table_name(),
+        }
+    }
+}
+
+
 
 #[derive(serde::Serialize)]
 pub struct QueryResult

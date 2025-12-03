@@ -50,7 +50,7 @@ fn create_db_client(tx_db: UnboundedSender<DbCmd>) -> DbClient
     let id = Uuid::new_v4();
     let (tx_thread, rx_thread) = unbounded_channel::<ResMsg>();
 
-    db_tx.send(DbCmd::Client(
+    tx_db.send(DbCmd::Client(
                 DbClientMsg::Register(id.clone(), tx_thread)
             )
         ).unwrap();
