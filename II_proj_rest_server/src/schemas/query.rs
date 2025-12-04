@@ -138,7 +138,7 @@ impl ExecuteQueryRequest
 /// - When number of columns in source and target doesn't match, user have to 
 /// use "destinationColumns" property to specify which columns data should be 
 /// inserted into.
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct CopyQuery
 {
     #[serde(rename="sourceFilepath")]
@@ -198,7 +198,7 @@ impl QueryTableName for AllowedQuery {
 
 
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct QueryResult
 {
     #[serde(rename="rowCount")]

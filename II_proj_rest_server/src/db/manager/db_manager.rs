@@ -229,7 +229,6 @@ impl DbManager
                     return Err(e);
                 }
             }
-
         }
         // If no worker is available we just return query id, post was 
         // successful, and query is scheduled for execution

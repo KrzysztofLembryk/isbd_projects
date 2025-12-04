@@ -49,27 +49,6 @@ impl WorkersManager
         WorkersManager { query_workers, available_workers, maintenance_worker}
     }
 
-    pub fn send_msg_to_available_worker(
-        &mut self, 
-        msg: DbWorkerMsg
-    ) -> Result<Option<DbWorkerMsg>, DbError>
-    {
-        let worker_id = match self.take_available_worker() {
-            Some(id) => id,
-            None => return Ok(Some(msg))
-        };
-
-        // This should never return error if we coded freeing workers correctly
-        let worker = self.query_workers
-                        .get(&worker_id)
-                        .ok_or_else(|| DbError::NotFound(
-                            format!("db worker with id: '{}' does not exist", worker_id)
-                        ))?;
-
-        worker.send_msg(msg)?;
-        Ok(None)
-    }
-
     pub fn execute_query(
         &mut self,
         query: QueryData
@@ -90,6 +69,11 @@ impl WorkersManager
         worker.send_msg(DbWorkerMsg::DoQuery(worker_id, query))?;
 
         Ok(())
+    }
+
+    pub fn free_worker(&mut self, worker_id: usize)
+    {
+        self.available_workers.insert(worker_id);
     }
 
     pub fn is_any_worker_available(&self) -> bool

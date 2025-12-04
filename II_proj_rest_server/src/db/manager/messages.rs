@@ -2,8 +2,9 @@ use crate::db::errors::DbError;
 use crate::db::storage::col_data::ColType;
 use crate::db::storage::metadata::{DbMetadata, TableMetadata};
 use crate::schemas::column::DataColumn;
+use crate::schemas::error::MultipleProblemsError;
 use crate::schemas::table::{ShallowTable, TableSchema};
-use crate::schemas::query::{AllowedQuery, CopyQuery, Query, SelectQuery, ShallowQuery};
+use crate::schemas::query::{AllowedQuery, CopyQuery, Query, SelectQuery, ShallowQuery, QueryResult};
 use uuid::Uuid;
 use tokio::sync::mpsc::{UnboundedSender};
 
@@ -21,7 +22,8 @@ pub enum DbCmd
 pub enum DbWorkerMsg
 {
     DoQuery(WorkerId, QueryData),
-    QueryCompleted(WorkerId, QueryRes),
+    QueryCompleted(WorkerId, QueryComlpetionMsg),
+    QueryFailed(WorkerId, QueryFailureMsg),
     Shutdown
 }
 
@@ -55,13 +57,44 @@ pub enum DbMaintenanceMsg
     Shutdown
 }
 
-pub struct QueryRes
+pub struct QueryFailureMsg
 {
     query_id: Uuid,
     table_id: Uuid, 
-    // If columns are None, this means it was CopyQuery
+    problems: MultipleProblemsError,
+}
+
+impl QueryFailureMsg
+{
+    pub fn new(
+        query_id: Uuid,
+        table_id: Uuid,
+        problems: MultipleProblemsError
+    ) -> QueryFailureMsg
+    {
+        QueryFailureMsg { query_id, table_id, problems }
+    }
+}
+
+pub struct QueryComlpetionMsg
+{
+    query_id: Uuid,
+    table_id: Uuid, 
+    // If is None, this means it was CopyQuery
     // otherwise it was SelectQuery
-    columns: Option<Vec<DataColumn>>,
+    res: Option<QueryResult>,
+}
+
+impl QueryComlpetionMsg
+{
+    pub fn new(
+            query_id: Uuid,
+            table_id: Uuid,
+            res: Option<QueryResult>
+        ) -> QueryComlpetionMsg
+        {
+            QueryComlpetionMsg { query_id, table_id, res }
+        }
 }
 
 pub enum QueryData
@@ -70,29 +103,58 @@ pub enum QueryData
     CopyQ(CopyQData)
 }
 // TODO: move below struct implementation to separate file 
+#[derive(Debug)]
 pub struct SelectQData
 {
-    id: Uuid,
+    query_id: Uuid,
     table_metadata: TableMetadata
 }
 
 impl SelectQData
 {
-    pub fn new(id: Uuid, table_metadata: TableMetadata) -> SelectQData
+    pub fn new(query_id: Uuid, table_metadata: TableMetadata) -> SelectQData
     {
-        SelectQData { id, table_metadata }
+        SelectQData { query_id, table_metadata }
+    }
+
+    // TODO: These two func should be in trait
+    pub fn query_id(&self) -> &Uuid
+    {
+        &self.query_id
+    }
+
+    pub fn table_metadata(&self) -> &TableMetadata
+    {
+        &self.table_metadata
     }
 }
+
+#[derive(Debug)]
 pub struct CopyQData
 {
+    query_id: Uuid,
     copy_q: CopyQuery,
     table_metadata: TableMetadata
 }
 
 impl CopyQData
 {
-    pub fn new(copy_q: CopyQuery, table_metadata: TableMetadata) -> CopyQData
+    pub fn new(
+        query_id: Uuid, 
+        copy_q: CopyQuery, 
+        table_metadata: TableMetadata
+    ) -> CopyQData
     {
-        CopyQData { copy_q, table_metadata }
+        CopyQData { query_id, copy_q, table_metadata }
+    }
+
+    pub fn query_id(&self) -> &Uuid
+    {
+        &self.query_id
+    }
+
+    pub fn table_metadata(&self) -> &TableMetadata
+    {
+        &self.table_metadata
     }
 }

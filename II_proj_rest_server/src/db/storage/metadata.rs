@@ -302,7 +302,7 @@ impl DbMetadata
             },
             AllowedQuery::CopyQ(c_q) => {
                 return Ok(QueryData::CopyQ(
-                    CopyQData::new(c_q.clone(), table_meta)
+                    CopyQData::new(*q_id, c_q.clone(), table_meta)
                 ));
             }
         }
@@ -541,7 +541,7 @@ impl TableState
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct TableMetadata
 {
     table_name: TableName,
@@ -588,7 +588,7 @@ impl TableMetadata
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 struct ColMetadata
 {
     c_name: ColumnName,

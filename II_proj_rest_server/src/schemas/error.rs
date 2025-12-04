@@ -1,12 +1,20 @@
 use serde;
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct MultipleProblemsError
 {
     problems: Vec<Problem>
 }
 
-#[derive(serde::Serialize)]
+impl MultipleProblemsError
+{
+    pub fn new(problems: Vec<Problem>) -> MultipleProblemsError
+    {
+        MultipleProblemsError {problems}
+    }
+}
+
+#[derive(serde::Serialize, Clone)]
 pub struct Problem
 {
     error: Error,
