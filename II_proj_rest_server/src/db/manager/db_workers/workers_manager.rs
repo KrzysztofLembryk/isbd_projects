@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::format;
 use tokio::io::Join;
 use uuid::Uuid;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use crate::db::errors::DbError;
-use crate::db::manager::messages::{DbCmd, DbWorkerMsg, DbMaintenanceMsg};
+use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, DbWorkerMsg, QueryData};
 use crate::db::manager::db_workers::maintenance_worker::MaintenanceWorker;
 use crate::db::manager::db_workers::query_worker::QueryWorker;
 
@@ -67,6 +68,28 @@ impl WorkersManager
 
         worker.send_msg(msg)?;
         Ok(None)
+    }
+
+    pub fn execute_query(
+        &mut self,
+        query: QueryData
+    ) -> Result<(), DbError>
+    {
+        let worker_id = match self.take_available_worker() {
+            Some(id) => id,
+            None => return Err(DbError::NotFound(format!("WorkersManager::execute_query: There is no available worker")))
+        };
+
+        // This should never return error if we coded freeing workers correctly
+        let worker = self.query_workers
+                        .get(&worker_id)
+                        .ok_or_else(|| DbError::NotFound(
+                            format!("WorkerrsManager::execute_query: db worker with id: '{}' does not exist", worker_id)
+                        ))?;
+
+        worker.send_msg(DbWorkerMsg::DoQuery(worker_id, query))?;
+
+        Ok(())
     }
 
     pub fn is_any_worker_available(&self) -> bool

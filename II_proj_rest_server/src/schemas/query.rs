@@ -97,6 +97,11 @@ impl Query
         self.query_definition.table_name()
     }
 
+    pub fn query_def(&self) -> &AllowedQuery
+    {
+        &self.query_definition
+    }
+
     pub fn update_status(&mut self, new_status: QueryStatus)
     {
         match new_status

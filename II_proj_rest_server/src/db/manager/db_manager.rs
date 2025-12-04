@@ -168,10 +168,13 @@ impl DbManager
     {
         let db_meta = self.db_meta
                 .as_mut()
-                .ok_or_else(|| DbError::NotFound("DbManager::put_table: database was not initialized".to_string()
+                .ok_or_else(|| DbError::NotFound("DbManager::post_query: database was not initialized".to_string()
         ))?;
 
-        match db_meta.authorize_query(&query)
+        // Function checks if query is for table that exists 
+        // if it is it increases nbr of queries operating on this table
+        // if it isn't we mark this query as FAILED and store this query 
+        match db_meta.increase_nbr_of_queries_operating_on_table(&query)
         {
             Ok(_) => (),
             Err(e) => {
@@ -185,41 +188,52 @@ impl DbManager
             }
         }
 
+        // Provided query is authorized so we create new Query from it with 
+        // Status CREATED  
         let new_query = Query::new(
             query
         );
+        let new_query_id = new_query.id().clone();
 
-        self.query_store.schedule_for_execution(new_query.id());
+        // Query is correct thus we schedule it for execution
+        self.query_store.schedule_for_execution(&new_query_id);
+        // We need to remember all queries so we add it to query store
         self.query_store.insert_query(new_query)?;
 
         if self.workers_manager.is_any_worker_available()
         {
-            // TODO: Add proper error handling
+            // If there is an available worker we want to give him first Query
+            // from QueryQueue
             // We should always get Some since above we've just scheduled query
             // for execution
+            // TODO: But still add proper error handling
             let pending_q = self.query_store.pop_pending_query().unwrap();
-            db_meta.plan_query_execution(pending_q);
+            // DbMeta plans query execution by checking if table for query 
+            // exists, and if it does it gives query file paths and column info 
+            let query_plan_data = match db_meta.plan_query_execution(pending_q)
+            {
+                Ok(val) => val,
+                Err(e) => {
+                    pending_q.update_status(QueryStatus::FAILED);
+                    return Err(e);
+                }
+            };
+
+            pending_q.update_status(QueryStatus::RUNNING);
+
+            match self.workers_manager.execute_query(query_plan_data)
+            {
+                Ok(_) => {},
+                Err(e) => {
+                    pending_q.update_status(QueryStatus::FAILED);
+                    return Err(e);
+                }
+            }
+
         }
-        else 
-        {
-        }
-
-
-        // match query
-        // {
-        //     AllowedQuery::CopyQ(q) => self.handle_copy_query(&q),
-        //     AllowedQuery::SelectQ(q) => self.handle_select_query(&q),
-        // }
-        todo!("implement post_query")
-    }
-
-    fn handle_copy_query(&mut self, query: &CopyQuery)
-    {
-
-    }
-    fn handle_select_query(&mut self, query: &SelectQuery)
-    {
-
+        // If no worker is available we just return query id, post was 
+        // successful, and query is scheduled for execution
+        return Ok(new_query_id);
     }
 
     // ########################################################################

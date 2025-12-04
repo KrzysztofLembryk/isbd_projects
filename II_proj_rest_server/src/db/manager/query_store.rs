@@ -41,11 +41,11 @@ impl QueryStore
         self.query_queue.push_back(*q_id);
     }
 
-    pub fn pop_pending_query(&mut self) -> Option<&Query>
+    pub fn pop_pending_query(&mut self) -> Option<&mut Query>
     {
         if let Some(q_id) = self.query_queue.pop_front()
         {
-            return self.queries.get(&q_id);
+            return self.queries.get_mut(&q_id);
         }
         None
     }

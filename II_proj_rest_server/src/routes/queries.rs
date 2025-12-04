@@ -1,3 +1,4 @@
+
 use crate::db::manager::messages::{DbClientMsg, ResMsg};
 use crate::db::db_client::DbClient;
 use crate::routes::execute_db_cmd::execute_db_command;
@@ -7,7 +8,6 @@ use actix_web::{HttpResponse, Responder, get, post, web};
 use uuid::Uuid;
 
 // TODO: remove code duplication by introducing helper functions/macro
-
 #[get("/queries")]
 async fn get_queries(
     db_client: web::Data<tokio::sync::RwLock<DbClient>>

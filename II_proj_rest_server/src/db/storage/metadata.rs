@@ -10,8 +10,9 @@ use tokio::fs as t_fs;
 
 use crate::db::errors::{DbError};
 use crate::db::constants::{MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX, MAX_ALLOWED_METADATA_CHANGES};
+use crate::db::manager::messages::{CopyQData, DbWorkerMsg, QueryData, SelectQData};
 use crate::schemas::table::{TableSchema, ShallowTable};
-use crate::schemas::query::{AllowedQuery, QueryTableName, Query};
+use crate::schemas::query::{AllowedQuery, QueryTableName, Query, QueryStatus};
 use crate::schemas::column::{Column};
 
 #[cfg(test)]
@@ -280,14 +281,35 @@ impl DbMetadata
         Ok(table_id)
     }
 
-    pub fn plan_query_execution(&self, q: &Query)
+    pub fn plan_query_execution(
+        &self, 
+        q: &mut Query,
+    ) -> Result<QueryData, DbError>
     {
-        let q_id = q.id();        
-        let table_name = q.table_name();
+        self.authorize_query(q.query_def())?;
+        q.update_status(QueryStatus::PLANNING);
+
+        let q_id = q.id();
+        let table_id = self.table_name_to_id_map.get(q.table_name()).unwrap();
+        let table_meta = self.tables_metadata.get(table_id).unwrap().clone();
+
+        match q.query_def()
+        {
+            AllowedQuery::SelectQ(_) => {
+                return Ok(QueryData::SelectQ(
+                    SelectQData::new(*q_id, table_meta)
+                ));
+            },
+            AllowedQuery::CopyQ(c_q) => {
+                return Ok(QueryData::CopyQ(
+                    CopyQData::new(c_q.clone(), table_meta)
+                ));
+            }
+        }
     }
 
     pub fn authorize_query(
-        &mut self, 
+        &self, 
         query: &impl QueryTableName
     ) -> Result<(), DbError>
     {
@@ -298,21 +320,36 @@ impl DbMetadata
         {
             // In put_table and delete_table we either insert or remove
             // given table from ALL maps, so this should always be ok
-            if let Some(t_state) = self.tables_states.get_mut(&table_id)
+            if let Some(t_state) = self.tables_states.get(&table_id) 
+                && self.tables_metadata.contains_key(&table_id)
             {
                 if t_state.delete_flag == DeleteFlag::NoDelete
                 {
-                    t_state.n_queries_operating_on_table += 1;
-
                     return Ok(());
                 }
-
-                return Err(DbError::NotFound(format!("SELECT query for table: '{}' ABORTED, such table does not exist in db", table_name)));
+                return Err(DbError::NotFound(format!("SELECT query for table: '{}' ABORTED, table is already deleted", table_name)));
             }
-
             return Err(DbError::InternalDbError(format!("SELECT query for table: '{}' ABORTED, such table exists in table_name_to_id_map BUT NOT in tables_states, DB CORRUPTED", table_name)));
         }
         return Err(DbError::NotFound(format!("SELECT query for table: '{}' ABORTED, such table does not exist in db", table_name)));
+    }
+
+    pub fn increase_nbr_of_queries_operating_on_table(
+        &mut self, 
+        q: &impl QueryTableName
+    ) -> Result<(), DbError>
+    {
+        self.authorize_query(q)?;
+
+        let table_name = q.table_name();
+
+        // We do unwrap here since authorize query checked that these vals exist
+        let table_id = self.table_name_to_id_map.get(table_name).unwrap();
+        let t_state = self.tables_states.get_mut(table_id).unwrap();
+
+        t_state.n_queries_operating_on_table += 1;
+
+        Ok(())
     }
 
     pub fn is_enough_changes(&self) -> bool
@@ -441,7 +478,7 @@ impl DbMetadata
         {
             let table_name = &table_meta.table_name;
 
-            for (col_name, col_meta) in &mut table_meta.columns
+            for col_meta in &mut table_meta.columns
             {
                 // At first we have only one FILE PATH (files will be created 
                 // later) for each column 
@@ -449,7 +486,7 @@ impl DbMetadata
                     &self.db_data_dir_path,
                     &table_id, 
                     table_name, 
-                    col_name, 
+                    &col_meta.c_name, 
                     file_idx
                 );
 
@@ -509,7 +546,7 @@ pub struct TableMetadata
 {
     table_name: TableName,
     table_id: Uuid,
-    columns: HashMap<ColumnName, ColMetadata>,
+    columns: Vec<ColMetadata>,
     // row_count: u32 // TODO: Table should remember how many rows it has
 }
 
@@ -518,7 +555,7 @@ impl TableMetadata
     fn new(
         name: &str, 
         id: &Uuid, 
-        columns: HashMap<String, ColMetadata>
+        columns: Vec<ColMetadata>
     ) -> TableMetadata
     {
         TableMetadata {
@@ -532,9 +569,9 @@ impl TableMetadata
     {
         let mut t_schema = TableSchema::new(&self.table_name);
 
-        for (col_name, col_meta) in &self.columns
+        for col_meta in &self.columns
         {
-            t_schema.push_col(&Column::new(col_name, &col_meta.c_type));
+            t_schema.push_col(&Column::new(&col_meta.c_name, &col_meta.c_type));
         }
 
         t_schema
@@ -619,12 +656,13 @@ fn is_metadata_ok(
 }
 
 fn are_columns_ok(
-    columns: &HashMap<ColumnName, ColMetadata>,
+    columns: &Vec<ColMetadata>,
     table_name: &str
 ) -> Result<(), DbError>
 {
-    for (col_name, col_meta) in columns
+    for col_meta in columns
     {
+        let col_name = &col_meta.c_name;
         if col_name.len() > MAX_COL_NAME_LEN
         {
             return Err(DbError::SizeExceeded{
@@ -674,16 +712,15 @@ fn create_dir_path(
     format!("{db_data_dir_path}/{table_id}_{table_name}")
 }
 
-
 // TODO: probably we should make this not a function, but TableSchema method !!!
 fn table_schema_into_columns_map(
     schema: &TableSchema, 
     table_id: &Uuid,
     db_data_dir_path: &str,
-) -> Result<HashMap<ColumnName, ColMetadata>, DbError>
+) -> Result<Vec<ColMetadata>, DbError>
 {
     let file_idx = 0;
-    let mut col_map: HashMap<ColumnName, ColMetadata> = HashMap::new();
+    let mut columns: Vec<ColMetadata> = Vec::new();
 
     // If we have duplicate col_names we will just overwrite previously added column
     for col in schema.columns()
@@ -699,7 +736,7 @@ fn table_schema_into_columns_map(
                     name: col_name
                     });
         }
-        if col_map.contains_key(&col_name)
+        if columns.iter().any(|c| c.c_name == col_name)
         {
             return Err(DbError::InvalidColumnName { msg: format!("Provided table: '{}' doesn't have UNIQUE column names, creating table ABORTED", schema.name()), name: col_name });
         }
@@ -712,8 +749,7 @@ fn table_schema_into_columns_map(
             file_idx
         );
 
-        col_map.insert(
-            col_name.clone(), 
+        columns.push(
             ColMetadata { 
                 c_name: col_name.clone(), 
                 c_type: col.c_type(), 
@@ -723,7 +759,7 @@ fn table_schema_into_columns_map(
             }
         );
     }
-    Ok(col_map)
+    Ok(columns)
 }
 
 fn create_table_name_to_id_map(

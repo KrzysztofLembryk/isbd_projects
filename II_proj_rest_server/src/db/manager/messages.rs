@@ -1,5 +1,7 @@
 use crate::db::errors::DbError;
+use crate::db::storage::col_data::ColType;
 use crate::db::storage::metadata::{DbMetadata, TableMetadata};
+use crate::schemas::column::DataColumn;
 use crate::schemas::table::{ShallowTable, TableSchema};
 use crate::schemas::query::{AllowedQuery, CopyQuery, Query, SelectQuery, ShallowQuery};
 use uuid::Uuid;
@@ -18,8 +20,8 @@ pub enum DbCmd
 
 pub enum DbWorkerMsg
 {
-    DoSelectQuery(WorkerId, SelectQInfo),
-    DoCopyQuery(WorkerId, CopyQInfo),
+    DoQuery(WorkerId, QueryData),
+    QueryCompleted(WorkerId, QueryRes),
     Shutdown
 }
 
@@ -53,14 +55,44 @@ pub enum DbMaintenanceMsg
     Shutdown
 }
 
-// TODO: move below struct implementation to separate file 
-struct SelectQInfo
+pub struct QueryRes
 {
-    table_name: String,
-    
+    query_id: Uuid,
+    table_id: Uuid, 
+    // If columns are None, this means it was CopyQuery
+    // otherwise it was SelectQuery
+    columns: Option<Vec<DataColumn>>,
 }
 
-struct CopyQInfo
+pub enum QueryData
 {
+    SelectQ(SelectQData),
+    CopyQ(CopyQData)
+}
+// TODO: move below struct implementation to separate file 
+pub struct SelectQData
+{
+    id: Uuid,
+    table_metadata: TableMetadata
+}
 
+impl SelectQData
+{
+    pub fn new(id: Uuid, table_metadata: TableMetadata) -> SelectQData
+    {
+        SelectQData { id, table_metadata }
+    }
+}
+pub struct CopyQData
+{
+    copy_q: CopyQuery,
+    table_metadata: TableMetadata
+}
+
+impl CopyQData
+{
+    pub fn new(copy_q: CopyQuery, table_metadata: TableMetadata) -> CopyQData
+    {
+        CopyQData { copy_q, table_metadata }
+    }
 }
