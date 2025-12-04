@@ -13,8 +13,8 @@ use crate::db::storage::col_header::ColHeader;
 use crate::db::errors::DbError;
 
 #[cfg(test)]
-#[path = "../tests/test_column_structs.rs"]
-mod test_column_structs;
+#[path = "../tests/storage/test_col_header.rs"]
+mod test_col_header;
 
 enum ResType
 {

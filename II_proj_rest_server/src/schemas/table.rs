@@ -59,5 +59,15 @@ impl ShallowTable
     {
         ShallowTable { table_id: table_id.clone(), name: String::from(name) }
     }
+
+    pub fn table_id(&self) -> Uuid
+    {
+        self.table_id
+    }
+
+    pub fn name(&self) -> String
+    {
+        self.name.clone()
+    }
 }
 

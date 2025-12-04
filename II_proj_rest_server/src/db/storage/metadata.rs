@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::vec;
+use std::{result, vec};
 use regex::Regex;
 use serde;
 use serde_json;
@@ -16,8 +16,8 @@ use crate::schemas::query::{AllowedQuery, QueryTableName, Query, QueryStatus};
 use crate::schemas::column::{Column};
 
 #[cfg(test)]
-#[path = "../tests/test_metadata_structs.rs"]
-mod test_column_structs;
+#[path = "../tests/storage/test_metadata.rs"]
+mod test_metadata;
 
 type TableName = String;
 pub type ColumnName = String;
@@ -192,7 +192,7 @@ impl DbMetadata
         Err(DbError::NotFound(format!("Table with id: {}, not found in db.", table_id)))
     }
 
-    pub fn mark_table_to_delete(
+    pub fn mark_table_for_deletion(
         &mut self, 
         table_id: &Uuid
     ) -> Result<(), DbError>
@@ -228,7 +228,7 @@ impl DbMetadata
             }
             if t_state.delete_flag != DeleteFlag::DoDelete
             {
-                return Err(DbError::Other(format!("Table with id: {} couldn't be deleted, since it's not marked to deletion", table_id)));
+                return Err(DbError::Other(format!("Table with id: {} couldn't be deleted, since it's not marked for deletion", table_id)));
             }
 
             let t_meta = self.tables_metadata.remove(table_id).unwrap();
@@ -258,7 +258,7 @@ impl DbMetadata
             return Err(DbError::Other(format!("DbMetadata::add_new_table: map contains given table_id: '{}', Uuid::new gave the same id, this shouldnt happen", table_id)));
         }
 
-        let columns = table_schema_into_columns_map(
+        let columns = table_schema_into_columns_vec(
             &table_schema, 
             &table_id, 
             &self.db_data_dir_path,
@@ -308,6 +308,9 @@ impl DbMetadata
         }
     }
 
+    /// Checks if there exists table that this query is for.
+    /// If table exists, it checks if table is marked to be deleted 
+    /// Returns OK if table exists and is not marked to be deleted
     pub fn authorize_query(
         &self, 
         query: &impl QueryTableName
@@ -355,7 +358,7 @@ impl DbMetadata
     pub fn decrease_nbr_of_queries_operating_on_table(
         &mut self, 
         table_id: &Uuid
-    )
+    ) -> Result<(), DbError>
     {
         // TODO: add proper error handling
         if let Some(t_state) = self.tables_states.get_mut(table_id)
@@ -363,15 +366,16 @@ impl DbMetadata
             if t_state.n_queries_operating_on_table > 0
             {
                 t_state.n_queries_operating_on_table -= 1;
+                return Ok(());
             }
             else 
             {
-                panic!("DbMetadta::decrease_nbr_of_queries_operating_on_table - We wanted to decrease even though there are no queries operating on table");
+                return Err(DbError::Other(format!("DbMetadta::decrease_nbr_of_queries_operating_on_table - We wanted to decrease even though there are no queries operating on table")));
             }
         }
         else 
         {
-            panic!("DbMetadata::decrease_nbr_of_queries_operating_on_table - there is no table in db with id: {}", table_id);
+            return Err(DbError::Other(format!("DbMetadata::decrease_nbr_of_queries_operating_on_table - there is no table in db with id: {}", table_id)));
         }
     }
 
@@ -525,7 +529,7 @@ impl DbMetadata
 // ############################ HELPER STRUCTS ################################
 // ############################################################################
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 enum DeleteFlag
 {
     DoDelete,
@@ -701,14 +705,6 @@ fn are_columns_ok(
                 name: String::from(col_name)
             });
         }
-
-        if *col_name != col_meta.c_name
-        {
-            return Err(DbError::InvalidColumnName { 
-                msg: format!("In table: '{}', hashMap has column name key: '{}'  but ColumnMetadata stores different column name: '{}' ", table_name, col_name, col_meta.c_name), 
-                name: String::from(col_name)
-            });
-        }
     }
     Ok(())
 }
@@ -736,7 +732,7 @@ fn create_dir_path(
 }
 
 // TODO: probably we should make this not a function, but TableSchema method !!!
-fn table_schema_into_columns_map(
+fn table_schema_into_columns_vec(
     schema: &TableSchema, 
     table_id: &Uuid,
     db_data_dir_path: &str,

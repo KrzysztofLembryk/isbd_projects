@@ -99,7 +99,7 @@ impl DbManager
                 .ok_or_else(|| DbError::NotFound("DbManager::mark_table_to_delete: database was not initialized".to_string()
         ))?;
 
-        db_meta.mark_table_to_delete(table_id)?;
+        db_meta.mark_table_for_deletion(table_id)?;
 
         Ok(())
     }
@@ -218,7 +218,7 @@ impl DbManager
                 .ok_or_else(|| DbError::NotFound("DbManager::handle_completed_query: database was not initialized".to_string()
         ))?;
 
-        db_meta.decrease_nbr_of_queries_operating_on_table(&q_msg.table_id());
+        db_meta.decrease_nbr_of_queries_operating_on_table(&q_msg.table_id())?;
 
         self.query_store.update_query_status(
             &q_msg.query_id(), 
@@ -242,7 +242,7 @@ impl DbManager
                 .ok_or_else(|| DbError::NotFound("DbManager::handle_completed_query: database was not initialized".to_string()
         ))?;
 
-        db_meta.decrease_nbr_of_queries_operating_on_table(&q_msg.table_id());
+        db_meta.decrease_nbr_of_queries_operating_on_table(&q_msg.table_id())?;
 
         self.query_store.update_query_status(
             &q_msg.query_id(), 
@@ -427,7 +427,7 @@ impl DbManager
 
                         db
                     },
-                Err(e) => return Err(e)
+                Err(e) => return Err(DbError::InternalDbError(format!("DbManager::init_metadata - {}",e)))
             }
         );
         Ok(())
