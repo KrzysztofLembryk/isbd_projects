@@ -22,14 +22,20 @@ impl DbEngine
 {
     pub async fn start(
         db_data_dir_path: &str, 
-        metadata_file_path: &str
+        metadata_file_path: &str,
+        nbr_of_db_workers: usize,
     ) -> DbEngine
     {
         info!("Starting db engine.\ndb_data_dir_path: '{}',\nmetadata_file_path: '{}'", db_data_dir_path, metadata_file_path);
 
         let (tx_db, mut rx_db) = unbounded_channel::<DbCmd>();
         let mut db_manager = 
-            DbManager::new(tx_db.clone(), db_data_dir_path, metadata_file_path)
+            DbManager::new(
+                tx_db.clone(), 
+                db_data_dir_path, 
+                metadata_file_path,
+                nbr_of_db_workers
+                )
             .await
             .unwrap();
 

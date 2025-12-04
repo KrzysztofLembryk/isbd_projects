@@ -12,10 +12,6 @@ use crate::db::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle
 use crate::db::storage::col_header::ColHeader;
 use crate::db::errors::DbError;
 
-#[cfg(test)]
-#[path = "../tests/storage/test_col_header.rs"]
-mod test_col_header;
-
 enum ResType
 {
     StrColRes(usize),

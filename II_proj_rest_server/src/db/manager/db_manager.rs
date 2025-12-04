@@ -3,7 +3,7 @@ use crate::db::constants::{MAX_DB_WORKERS};
 use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryStatus, SelectQuery, ShallowQuery};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::errors::DbError;
-use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, QueryComlpetionMsg, QueryFailureMsg, ResMsg};
+use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, QueryCompletionMsg, QueryFailureMsg, ResMsg};
 use crate::db::manager::db_workers::workers_manager::WorkersManager;
 use crate::db::manager::query_store::QueryStore;
 
@@ -12,6 +12,10 @@ use tokio::sync::mpsc::{UnboundedSender};
 use std::io::ErrorKind as err_kind;
 use std::collections::HashMap;
 use log::{info, warn, debug, error};
+
+#[cfg(test)]
+#[path = "../tests/manager/test_db_manager.rs"]
+mod test_db_manager;
 
 struct DbPaths
 {
@@ -47,7 +51,8 @@ impl DbManager
     pub async fn new(
         tx_to_db: UnboundedSender<DbCmd>,
         db_data_dir_path: &str, 
-        metadata_file_path: &str
+        metadata_file_path: &str,
+        nbr_of_db_workers: usize
     ) -> Result<DbManager, DbError>
     {
         let mut db_manager = DbManager{
@@ -55,7 +60,7 @@ impl DbManager
             query_store: QueryStore::new(),
             paths: DbPaths::new(metadata_file_path, db_data_dir_path),
             workers_manager: WorkersManager::new(
-                db_data_dir_path, MAX_DB_WORKERS, tx_to_db), 
+                db_data_dir_path, nbr_of_db_workers, tx_to_db), 
             tx_server_channels: HashMap::new(),
         };
 
@@ -211,7 +216,7 @@ impl DbManager
     pub fn handle_completed_query(
         &mut self, 
         worker_id: usize, 
-        q_msg: QueryComlpetionMsg
+        q_msg: QueryCompletionMsg
     ) -> Result<(), DbError>
     {
         let db_meta = self.db_meta
@@ -295,7 +300,7 @@ impl DbManager
         Ok(false)
     }
 
-    fn store_completed_query(&mut self, completed_q: QueryComlpetionMsg)
+    fn store_completed_query(&mut self, completed_q: QueryCompletionMsg)
     {
         let query_id = completed_q.query_id();
         let q_res = completed_q.res();

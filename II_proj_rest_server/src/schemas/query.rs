@@ -206,3 +206,11 @@ pub struct QueryResult
     row_count: i32,
     columns: Vec<DataColumn>,
 }
+
+impl QueryResult
+{
+    pub fn new(row_count: i32, columns: Vec<DataColumn>) -> QueryResult
+    {
+        QueryResult { row_count, columns }
+    }
+}

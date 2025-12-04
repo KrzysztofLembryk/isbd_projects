@@ -15,7 +15,8 @@ pub const BATCH_SIZE: usize = 10;
 // ############################################################################
 // ########################### FILES CONSTANTS ################################
 // ############################################################################
-pub const FILE_PATH_REGEX: &str = r"^\.?[a-zA-Z/][a-zA-Z0-9_/]*$";
+// pub const FILE_PATH_REGEX: &str = r"^\.?[a-zA-Z/][a-zA-Z0-9_/.]*$";
+pub const FILE_PATH_REGEX: &str = r"^\.?[a-zA-Z/]([a-zA-Z0-9_/]*|/\.)*[a-zA-Z0-9_]*$";
 pub const METADATA_FILE_PATH: &str = "./db_metadata";
 pub const DB_DATA_DIR: &str = "./db_data";
 

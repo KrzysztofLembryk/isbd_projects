@@ -1,6 +1,6 @@
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::{db::manager::messages::{DbCmd, DbWorkerMsg, QueryComlpetionMsg, QueryData, QueryFailureMsg}, schemas::error::{Error, MultipleProblemsError, Problem}};
+use crate::{db::manager::messages::{DbCmd, DbWorkerMsg, QueryCompletionMsg, QueryData, QueryFailureMsg}, schemas::{error::{Error, MultipleProblemsError, Problem}, query::QueryResult}};
 
 
 pub struct QueryWorker
@@ -35,7 +35,7 @@ impl QueryWorker
                     else 
                     {
                         // Simulating working on query
-                        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         self.handle_do_query(q_data);
                     }
                 },
@@ -59,10 +59,10 @@ impl QueryWorker
                 println!("Worker '{}' got SELECT QUERY: {:?}", worker_id, s_q);
 
                 let table_meta = s_q.table_metadata();
-                let completion_msg = QueryComlpetionMsg::new(
+                let completion_msg = QueryCompletionMsg::new(
                     *s_q.query_id(), 
                     *table_meta.table_id(), 
-                    None
+                    Some(QueryResult::new(0, vec![]))
                 );
 
                 self.send_msg_to_db(

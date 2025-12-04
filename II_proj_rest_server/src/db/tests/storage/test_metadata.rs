@@ -329,7 +329,7 @@ mod is_metadata_ok {
 
         let invalid_data_dir_double_dot_start = String::from("../invalid/dir");
         let invalid_data_dir_double_dot_mid = String::from("./invalid/../dir");
-        let invalid_data_dir_dot_mid = String::from("./invalid/./dir");
+        // let invalid_data_dir_dot_mid = String::from("./invalid/./dir");
 
         assert!(is_metadata_ok(
             table_count, 
@@ -342,12 +342,6 @@ mod is_metadata_ok {
             &table_map, 
             &metadata_file_path, 
             &invalid_data_dir_double_dot_mid).is_err()
-        );
-        assert!(is_metadata_ok(
-            table_count, 
-            &table_map, 
-            &metadata_file_path, 
-            &invalid_data_dir_dot_mid).is_err()
         );
     }
 

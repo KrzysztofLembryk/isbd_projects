@@ -22,7 +22,7 @@ pub enum DbCmd
 pub enum DbWorkerMsg
 {
     DoQuery(WorkerId, QueryData),
-    QueryCompleted(WorkerId, QueryComlpetionMsg),
+    QueryCompleted(WorkerId, QueryCompletionMsg),
     QueryFailed(WorkerId, QueryFailureMsg),
     Shutdown
 }
@@ -92,7 +92,7 @@ impl QueryFailureMsg
     }
 }
 
-pub struct QueryComlpetionMsg
+pub struct QueryCompletionMsg
 {
     query_id: Uuid,
     table_id: Uuid, 
@@ -101,15 +101,15 @@ pub struct QueryComlpetionMsg
     res: Option<QueryResult>,
 }
 
-impl QueryComlpetionMsg
+impl QueryCompletionMsg
 {
     pub fn new(
         query_id: Uuid,
         table_id: Uuid,
         res: Option<QueryResult>
-    ) -> QueryComlpetionMsg
+    ) -> QueryCompletionMsg
     {
-        QueryComlpetionMsg { query_id, table_id, res }
+        QueryCompletionMsg { query_id, table_id, res }
     }
 
     pub fn table_id(&self) -> Uuid
