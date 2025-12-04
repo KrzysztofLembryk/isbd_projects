@@ -4,6 +4,7 @@ use crate::db::manager::messages::{DbClientMsg, DbCmd, ResMsg, DbWorkerMsg};
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use uuid::Uuid;
+use log::{info, warn, debug, error};
 
 enum BreakMsg
 {
@@ -24,6 +25,8 @@ impl DbEngine
         metadata_file_path: &str
     ) -> DbEngine
     {
+        info!("Starting db engine.\ndb_data_dir_path: '{}',\nmetadata_file_path: '{}'", db_data_dir_path, metadata_file_path);
+
         let (tx_db, mut rx_db) = unbounded_channel::<DbCmd>();
         let mut db_manager = 
             DbManager::new(tx_db.clone(), db_data_dir_path, metadata_file_path)
@@ -31,13 +34,13 @@ impl DbEngine
             .unwrap();
 
         let db_task_handle = tokio::spawn(async move {
-                println!("SPAWNING DB TASK");
+                debug!("SPAWNING DB TASK");
                 loop  
                 {
                     match rx_db.recv().await
                     {
                         Some(DbCmd::Shutdown) => {
-                            println!("\n##########\nDB GOT SHUTDOWN\n##########");
+                            debug!("\n##########\nDB GOT SHUTDOWN\n##########");
 
                             db_manager.shutdown().await.unwrap();
 
@@ -64,7 +67,7 @@ impl DbEngine
                             }
                         },
                         None => {
-                            println!("Db task - rx_dv.recv channel was closed");
+                            warn!("Db task - all tx channels were closed, db rx channel returnen None");
                             db_manager.shutdown().await.unwrap();
                             break;
                         }
@@ -84,10 +87,11 @@ impl DbEngine
     /// Method **consumes engine!!**
     pub async fn shutdown(self)
     {
+        info!("Engine shutdown");
         match self.tx_db.send(DbCmd::Shutdown)
         {
             Err(e) => {
-                println!("DbEngine::shutdown - db task closed its channel, db is already shutdown, ERROR: {}", e);
+                error!("DbEngine::shutdown - db task closed its channel, db is already shutdown, ERROR: {}", e);
             },
             _ => ()
         }
@@ -101,6 +105,7 @@ fn send_result_to_client(
     db_manager: &mut DbManager
 )
 {
+    debug!("Db sending result to client: {}", conn_id);
     // TODO: Add erorr handling here
     db_manager.send_result(
         conn_id, 
@@ -120,7 +125,7 @@ fn handle_worker_cmd(
             match db_manager.handle_completed_query(worker_id, success_msg)
             {
                 Err(e) => {
-                    println!("DbTask got error when handling QueryCompleted: {}", e);
+                    error!("DbTask::handle_worker_cmd: got error when handling QueryCompleted: {}", e);
                     return BreakMsg::DoBreak;
                 },
                 _ => {}
@@ -130,7 +135,7 @@ fn handle_worker_cmd(
             match db_manager.handle_failed_query(worker_id, fail_msg)
             {
                 Err(e) => {
-                    println!("DbTask got error when handling QueryFailed: {}", e);
+                    error!("DbTask::handle_worker_cmd got error when handling QueryFailed: {}", e);
                     return BreakMsg::DoBreak;
                 },
                 _ => {}
@@ -138,8 +143,7 @@ fn handle_worker_cmd(
         },
         _ => {
             // TODO: probably wwe should shutdown db here
-            println!("DbTask : DbManager got unsupported msg from DbWorker,
-            DB is in CORRUPTED STATE");
+            error!("DbTask::handleWorker_cmd DbManager got unsupported msg from DbWorker, DB is in CORRUPTED STATE");
             return  BreakMsg::DoBreak;
         }    
     }
@@ -158,6 +162,7 @@ fn handle_client_cmd(
             db_manager.register(&id, tx);
         }
         DbClientMsg::GetTables(conn_id) => {
+            debug!("DbTask::GetTables conn_id: {}", conn_id);
             let res = db_manager.get_tables();
 
             send_result_to_client(
@@ -166,8 +171,9 @@ fn handle_client_cmd(
                 db_manager
             );
         }
-        DbClientMsg::GetTableDetails(conn_id, id) => {
-            let res = db_manager.get_table_details(&id);
+        DbClientMsg::GetTableDetails(conn_id, table_id) => {
+            debug!("DbTask::GetTableDetails conn_id: {}, table_id: {}", conn_id, table_id);
+            let res = db_manager.get_table_details(&table_id);
 
             send_result_to_client(
                 ResMsg::ResTableDetails(res), 
@@ -176,11 +182,13 @@ fn handle_client_cmd(
             );
         },
         DbClientMsg::DeleteTable(conn_id, table_id) => {
+            debug!("DbTask::DeleteTable conn_id: {}, table_id: {}", conn_id, table_id);
             let res = db_manager.mark_table_to_delete(&table_id);
 
             match db_manager.delete_table(&table_id)
             {
                 Ok(t_meta) => {
+                    debug!("DbTask::DeleteTable scheduling deletion of table: {}", table_id);
                     // No queries running on table, so we can 
                     // schedule table deletion
                     let res = db_manager
@@ -194,7 +202,7 @@ fn handle_client_cmd(
                 Err(e) => {
                     // This means we cannot yet delete table, since
                     // there are some queries running on it
-                    println!("DbTask::DeleteTable: {}", e);
+                    error!("DbTask::DeleteTable: {}", e);
                     send_result_to_client(
                         ResMsg::ResDeleteTable(res), 
                         &conn_id, 

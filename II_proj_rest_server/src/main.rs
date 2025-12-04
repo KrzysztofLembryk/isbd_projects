@@ -8,11 +8,17 @@ use II_proj_rest_server::db::db_engine::DbEngine;
 
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use uuid::Uuid;
+use env_logger::Builder;
+use log::LevelFilter;
 
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()>
 {
+    Builder::new()
+        .filter_level(LevelFilter::Debug)
+        .format_timestamp_millis()
+        .init();
     // STREAMING large amounts of data Actix:
     // https://github.com/actix/actix-web/issues/1653
 

@@ -11,6 +11,7 @@ use uuid::Uuid;
 use tokio::sync::mpsc::{UnboundedSender};
 use std::io::ErrorKind as err_kind;
 use std::collections::HashMap;
+use log::{info, warn, debug, error};
 
 struct DbPaths
 {
@@ -335,13 +336,13 @@ impl DbManager
         tx: UnboundedSender<ResMsg>
     )
     {
-        println!("Registering: {}", connection_id);
+        debug!("DbTask::register id: {}", connection_id);
         self.tx_server_channels.insert(connection_id.clone(), tx);
     }
 
     pub fn unregister(&mut self, connection_id: &Uuid)
     {
-        println!("Unregistering: {}", connection_id);
+        debug!("DbTask::unregister id: {}", connection_id);
         self.tx_server_channels.remove(connection_id);
     }
 
@@ -406,12 +407,10 @@ impl DbManager
 
     async fn init_metadata(&mut self) -> Result<(), DbError>
     {
-        println!("INITING METADATA");
         // To start db, db metadata file must be present
         let metadata_path = &self.paths.metadata_file_path;
         let data_dir = &self.paths.data_dir_path;
 
-        println!("INIT_METADATA: metadata file path: {}, db_data_dir_path: {}", metadata_path, data_dir);
         self.db_meta = Some(
             match DbMetadata::read_from_file(metadata_path).await
             {

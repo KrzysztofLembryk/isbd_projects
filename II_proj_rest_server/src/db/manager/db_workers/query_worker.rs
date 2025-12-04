@@ -34,6 +34,8 @@ impl QueryWorker
                     }
                     else 
                     {
+                        // Simulating working on query
+                        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                         self.handle_do_query(q_data);
                     }
                 },
