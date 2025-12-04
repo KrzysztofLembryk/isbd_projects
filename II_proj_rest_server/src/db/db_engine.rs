@@ -1,5 +1,5 @@
 use crate::db::manager::db_manager::{DbManager};
-use crate::db::manager::messages::{DbClientMsg, DbCmd, ResMsg};
+use crate::db::manager::messages::{DbClientMsg, DbCmd, ResMsg, DbWorkerMsg};
 
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
@@ -44,20 +44,28 @@ impl DbEngine
                             break;
                         },
                         Some(DbCmd::Client(msg)) => {
-                            match handle_client_cmd(msg, &mut db_manager).await
+                            match handle_client_cmd(msg, &mut db_manager)
                             {
                                 BreakMsg::DoBreak => {
+                                    db_manager.shutdown().await.unwrap();
                                     break;
                                 },
                                 _ => ()
                             }
                         },
                         Some(DbCmd::DbWorker(msg)) => {
-
+                            match handle_worker_cmd(msg, &mut db_manager)
+                            {
+                                BreakMsg::DoBreak => {
+                                    db_manager.shutdown().await.unwrap();
+                                    break;
+                                },
+                                _ => ()
+                            }
                         },
                         None => {
                             println!("Db task - rx_dv.recv channel was closed");
-                            // TODO: shutdown of db, db workers etc
+                            db_manager.shutdown().await.unwrap();
                             break;
                         }
                     }
@@ -76,7 +84,13 @@ impl DbEngine
     /// Method **consumes engine!!**
     pub async fn shutdown(self)
     {
-        self.tx_db.send(DbCmd::Shutdown).unwrap();
+        match self.tx_db.send(DbCmd::Shutdown)
+        {
+            Err(e) => {
+                println!("DbEngine::shutdown - db task closed its channel, db is already shutdown, ERROR: {}", e);
+            },
+            _ => ()
+        }
         self.db_handle.await.unwrap();
     }
 }
@@ -95,12 +109,44 @@ fn send_result_to_client(
     db_manager.unregister(conn_id);
 }
 
-async fn handle_worker_cmd()
+fn handle_worker_cmd(
+    worker_msg: DbWorkerMsg,
+    db_manager: &mut DbManager,
+) -> BreakMsg
 {
-
+    match worker_msg
+    {
+        DbWorkerMsg::QueryCompleted(worker_id, success_msg) => {
+            match db_manager.handle_completed_query(worker_id, success_msg)
+            {
+                Err(e) => {
+                    println!("DbTask got error when handling QueryCompleted: {}", e);
+                    return BreakMsg::DoBreak;
+                },
+                _ => {}
+            }
+        },
+        DbWorkerMsg::QueryFailed(worker_id, fail_msg) => {
+            match db_manager.handle_failed_query(worker_id, fail_msg)
+            {
+                Err(e) => {
+                    println!("DbTask got error when handling QueryFailed: {}", e);
+                    return BreakMsg::DoBreak;
+                },
+                _ => {}
+            }
+        },
+        _ => {
+            // TODO: probably wwe should shutdown db here
+            println!("DbTask : DbManager got unsupported msg from DbWorker,
+            DB is in CORRUPTED STATE");
+            return  BreakMsg::DoBreak;
+        }    
+    }
+    return BreakMsg::NoMsg;
 }
 
-async fn handle_client_cmd(
+fn handle_client_cmd(
     client_msg: DbClientMsg, 
     db_manager: &mut DbManager
 ) -> BreakMsg

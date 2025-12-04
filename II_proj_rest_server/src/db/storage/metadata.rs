@@ -10,7 +10,7 @@ use tokio::fs as t_fs;
 
 use crate::db::errors::{DbError};
 use crate::db::constants::{MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX, MAX_ALLOWED_METADATA_CHANGES};
-use crate::db::manager::messages::{CopyQData, DbWorkerMsg, QueryData, SelectQData};
+use crate::db::manager::messages::{CopyQData, QueryData, SelectQData};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::schemas::query::{AllowedQuery, QueryTableName, Query, QueryStatus};
 use crate::schemas::column::{Column};
@@ -350,6 +350,29 @@ impl DbMetadata
         t_state.n_queries_operating_on_table += 1;
 
         Ok(())
+    }
+
+    pub fn decrease_nbr_of_queries_operating_on_table(
+        &mut self, 
+        table_id: &Uuid
+    )
+    {
+        // TODO: add proper error handling
+        if let Some(t_state) = self.tables_states.get_mut(table_id)
+        {
+            if t_state.n_queries_operating_on_table > 0
+            {
+                t_state.n_queries_operating_on_table -= 1;
+            }
+            else 
+            {
+                panic!("DbMetadta::decrease_nbr_of_queries_operating_on_table - We wanted to decrease even though there are no queries operating on table");
+            }
+        }
+        else 
+        {
+            panic!("DbMetadata::decrease_nbr_of_queries_operating_on_table - there is no table in db with id: {}", table_id);
+        }
     }
 
     pub fn is_enough_changes(&self) -> bool

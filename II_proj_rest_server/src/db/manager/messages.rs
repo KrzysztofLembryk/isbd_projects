@@ -74,6 +74,22 @@ impl QueryFailureMsg
     {
         QueryFailureMsg { query_id, table_id, problems }
     }
+
+    pub fn table_id(&self) -> Uuid
+    {
+        self.table_id
+    }
+
+    pub fn query_id(&self) -> Uuid
+    {
+        self.query_id
+    }
+
+    /// Consumes self
+    pub fn problems(self) -> MultipleProblemsError
+    {
+        self.problems
+    }
 }
 
 pub struct QueryComlpetionMsg
@@ -88,13 +104,28 @@ pub struct QueryComlpetionMsg
 impl QueryComlpetionMsg
 {
     pub fn new(
-            query_id: Uuid,
-            table_id: Uuid,
-            res: Option<QueryResult>
-        ) -> QueryComlpetionMsg
-        {
-            QueryComlpetionMsg { query_id, table_id, res }
-        }
+        query_id: Uuid,
+        table_id: Uuid,
+        res: Option<QueryResult>
+    ) -> QueryComlpetionMsg
+    {
+        QueryComlpetionMsg { query_id, table_id, res }
+    }
+
+    pub fn table_id(&self) -> Uuid
+    {
+        self.table_id
+    }
+
+    pub fn query_id(&self) -> Uuid
+    {
+        self.query_id
+    }
+
+    pub fn res(self) -> Option<QueryResult>
+    {
+        self.res
+    }
 }
 
 pub enum QueryData

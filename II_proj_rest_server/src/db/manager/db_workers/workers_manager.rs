@@ -71,9 +71,13 @@ impl WorkersManager
         Ok(())
     }
 
-    pub fn free_worker(&mut self, worker_id: usize)
+    pub fn free_worker(&mut self, worker_id: usize) -> Result<(), DbError>
     {
-        self.available_workers.insert(worker_id);
+        if self.query_workers.contains_key(&worker_id)
+        {
+            self.available_workers.insert(worker_id);
+        }
+        Err(DbError::NotFound(format!("WorkersManager::free_worker - worker with id: {} does not exist", worker_id)))
     }
 
     pub fn is_any_worker_available(&self) -> bool
@@ -93,11 +97,12 @@ impl WorkersManager
     pub async fn shutdown(self) -> Result<(), DbError> 
     {
         self.notify_all_workers_about_shutdown()?;
-        self.maintenance_worker.await_task().await;
+        // TODO: we probably should store all errors on vec and create multiple error msg from it
+        let _ = self.maintenance_worker.await_task().await;
 
         for (_, handler) in self.query_workers
         {
-            handler.handle.await;
+            let _ = handler.handle.await;
         }
 
         Ok(())

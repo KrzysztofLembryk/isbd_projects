@@ -3,7 +3,7 @@ use crate::db::constants::{MAX_DB_WORKERS};
 use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryStatus, SelectQuery, ShallowQuery};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::errors::DbError;
-use crate::db::manager::messages::{DbMaintenanceMsg, ResMsg, DbCmd};
+use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, QueryComlpetionMsg, QueryFailureMsg, ResMsg};
 use crate::db::manager::db_workers::workers_manager::WorkersManager;
 use crate::db::manager::query_store::QueryStore;
 
@@ -200,39 +200,130 @@ impl DbManager
         // We need to remember all queries so we add it to query store
         self.query_store.insert_query(new_query)?;
 
-        if self.workers_manager.is_any_worker_available()
-        {
-            // If there is an available worker we want to give him first Query
-            // from QueryQueue
-            // We should always get Some since above we've just scheduled query
-            // for execution
-            // TODO: But still add proper error handling
-            let pending_q = self.query_store.pop_pending_query().unwrap();
-            // DbMeta plans query execution by checking if table for query 
-            // exists, and if it does it gives query file paths and column info 
-            let query_plan_data = match db_meta.plan_query_execution(pending_q)
-            {
-                Ok(val) => val,
-                Err(e) => {
-                    pending_q.update_status(QueryStatus::FAILED);
-                    return Err(e);
-                }
-            };
+        self.execute_next_query()?;
 
-            pending_q.update_status(QueryStatus::RUNNING);
-
-            match self.workers_manager.execute_query(query_plan_data)
-            {
-                Ok(_) => {},
-                Err(e) => {
-                    pending_q.update_status(QueryStatus::FAILED);
-                    return Err(e);
-                }
-            }
-        }
         // If no worker is available we just return query id, post was 
         // successful, and query is scheduled for execution
         return Ok(new_query_id);
+    }
+
+    pub fn handle_completed_query(
+        &mut self, 
+        worker_id: usize, 
+        q_msg: QueryComlpetionMsg
+    ) -> Result<(), DbError>
+    {
+        let db_meta = self.db_meta
+                .as_mut()
+                .ok_or_else(|| DbError::NotFound("DbManager::handle_completed_query: database was not initialized".to_string()
+        ))?;
+
+        db_meta.decrease_nbr_of_queries_operating_on_table(&q_msg.table_id());
+
+        self.query_store.update_query_status(
+            &q_msg.query_id(), 
+            QueryStatus::COMPLETED
+        )?;
+        self.store_completed_query(q_msg);
+        self.free_db_worker(worker_id)?;
+        self.execute_next_query()?;
+
+        Ok(())
+    }
+
+    pub fn handle_failed_query(
+        &mut self,
+        worker_id: usize,
+        q_msg: QueryFailureMsg
+    ) -> Result<(), DbError>
+    {
+        let db_meta = self.db_meta
+                .as_mut()
+                .ok_or_else(|| DbError::NotFound("DbManager::handle_completed_query: database was not initialized".to_string()
+        ))?;
+
+        db_meta.decrease_nbr_of_queries_operating_on_table(&q_msg.table_id());
+
+        self.query_store.update_query_status(
+            &q_msg.query_id(), 
+            QueryStatus::FAILED
+        )?;
+
+        self.store_failed_query(q_msg);
+        self.free_db_worker(worker_id)?;
+        self.execute_next_query()?;
+
+        Ok(())
+    }
+
+    fn execute_next_query(&mut self) -> Result<bool, DbError>
+    {
+        if self.workers_manager.is_any_worker_available()
+        {
+            if let Some(pending_q) = self.query_store.pop_pending_query()
+            {
+                let db_meta = self.db_meta
+                        .as_mut()
+                        .ok_or_else(|| DbError::NotFound("DbManager::post_query: database was not initialized".to_string()
+                ))?;
+                // DbMeta plans query execution by checking if table for query 
+                // exists, and if it does it gives query file paths and column info 
+                let query_plan_data = match db_meta.plan_query_execution(pending_q)
+                {
+                    Ok(val) => val,
+                    Err(e) => {
+                        pending_q.update_status(QueryStatus::FAILED);
+                        return Err(e);
+                    }
+                };
+    
+                pending_q.update_status(QueryStatus::RUNNING);
+    
+                match self.workers_manager.execute_query(query_plan_data)
+                {
+                    Ok(_) => {
+                        return Ok(true)
+                    },
+                    Err(e) => {
+                        pending_q.update_status(QueryStatus::FAILED);
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn store_completed_query(&mut self, completed_q: QueryComlpetionMsg)
+    {
+        let query_id = completed_q.query_id();
+        let q_res = completed_q.res();
+
+        match q_res
+        {
+            Some(res) => {
+                self.query_store.store_query_result(
+                    &query_id,
+                    res
+                );
+            }
+            None => {
+                // This means it was CopyQuery so we don't need to store it 
+            }
+        }
+    }
+
+    fn store_failed_query(&mut self, failed_q: QueryFailureMsg)
+    {
+        self.query_store.store_query_failure(
+            &failed_q.query_id(), 
+            failed_q.problems()
+        );
+    }
+
+    fn free_db_worker(&mut self, worker_id: usize) -> Result<(), DbError>
+    {
+        self.workers_manager.free_worker(worker_id)
     }
 
     // ########################################################################
