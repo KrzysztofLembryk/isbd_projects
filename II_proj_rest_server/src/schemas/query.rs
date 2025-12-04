@@ -14,6 +14,7 @@ pub enum QueryStatus
 }
 
 #[derive(Clone, serde::Deserialize)]
+#[serde(untagged)]
 pub enum AllowedQuery
 {
     SelectQ(SelectQuery),

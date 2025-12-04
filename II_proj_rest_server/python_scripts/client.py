@@ -55,7 +55,6 @@ def create_table(table_name, columns):
         print(f"✗ Error creating table '{table_name}': {e}")
         return False, None, str(e)
 
-
 # Example usage:
 def sample_create_table(table_name: str):
     success, table_id, error = create_table(
@@ -72,7 +71,6 @@ def sample_create_table(table_name: str):
     else:
         print(f"CREATE TABLE ERROR: {error}")
 
-
 def sample_get_table_details():
     print(f"Sending {NUM_REQUESTS} concurrent requests...")
     
@@ -84,8 +82,79 @@ def sample_get_table_details():
     print(f"Success: {sum(1 for r in results if r == 200)}")
     print(f"Errors: {sum(1 for r in results if r != 200)}")
 
+# ...existing code...
+
+def post_query(query_definition):
+    """
+    Send a POST request to execute a query.
+    
+    Args:
+        query_definition: Dict with query details
+                         e.g., {"queryDefinition": {"SelectQ": {...}}} 
+                         or {"queryDefinition": {"CopyQ": {...}}}
+    
+    Returns:
+        tuple: (success: bool, query_id: str or None, error_msg: str or None)
+    """
+    url = f"{SERVER_URL}/query"
+    
+    try:
+        response = requests.post(url, json=query_definition)
+        
+        if response.status_code == 200:
+            query_id = response.json()
+            print(f"✓ Query submitted successfully with ID: {query_id}")
+            return True, query_id, None
+        else:
+            error_msg = response.json().get("message", "Unknown error")
+            print(f"✗ Failed to submit query: {error_msg}")
+            return False, None, error_msg
+            
+    except Exception as e:
+        print(f"✗ Error submitting query: {e}")
+        return False, None, str(e)
+
+
+def sample_post_select_query(table_name):
+    """Example: Submit a SELECT query"""
+    query_def = {
+        "queryDefinition": {
+                "tableName": table_name
+        }
+    }
+    
+    success, query_id, error = post_query(query_def)
+    
+    if success:
+        print(f"SELECT query created with ID: {query_id}")
+    else:
+        print(f"POST QUERY ERROR: {error}")
+
+
+def sample_post_copy_query(table_name, filepath):
+    """Example: Submit a COPY query"""
+    query_def = {
+        "queryDefinition": {
+                "sourceFilepath": filepath,
+                "destinationTableName": table_name,
+                "destinationColumns": None,  # or ["col1", "col2"]
+                "doesCsvContainHeader": True
+        }
+    }
+    
+    success, query_id, error = post_query(query_def)
+    
+    if success:
+        print(f"COPY query created with ID: {query_id}")
+    else:
+        print(f"POST QUERY ERROR: {error}")
+
 
 if __name__ == "__main__":
-    sample_get_table_details()
-    # for i in range(1, 20):
+    # sample_get_table_details()
+    # for i in range(1, 3):
     #     sample_create_table(f"table_{i}")
+    
+    # sample_post_select_query("table_1")
+    # sample_post_select_query("table_X")
+    sample_post_copy_query("table_1", "random/filepath")

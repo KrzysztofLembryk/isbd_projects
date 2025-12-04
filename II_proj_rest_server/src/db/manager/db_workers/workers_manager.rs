@@ -76,6 +76,7 @@ impl WorkersManager
         if self.query_workers.contains_key(&worker_id)
         {
             self.available_workers.insert(worker_id);
+            return Ok(());
         }
         Err(DbError::NotFound(format!("WorkersManager::free_worker - worker with id: {} does not exist", worker_id)))
     }

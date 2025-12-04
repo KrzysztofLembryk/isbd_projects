@@ -26,7 +26,7 @@ async fn get_tables(
     ).await;
 
     // Simulate long await for data
-    sleep(Duration::from_secs(10)).await;
+    sleep(Duration::from_secs(5)).await;
     let res = rx_conn.recv().await;
 
     return match res
