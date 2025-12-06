@@ -1,7 +1,7 @@
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use std::io::{Write};
+use tokio::fs as tokio_fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, AsyncSeek, SeekFrom, AsyncSeekExt};
 use zstd;
+use std::collections::VecDeque;
 
 use crate::db::constants::{LogicalColType, BATCH_SIZE, BUF_SIZE, DB_DATA_DIR, ZSTD_ENCODE_LEVEL};
 use crate::db::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle_decode_i, vle_decode_u};
@@ -55,7 +55,7 @@ pub struct ColData<T: ColType>
     data: Vec<T>,
     n_rows: usize,
     result: ResType,
-    file_handle: Option<File>,
+    file_handle: Option<tokio::fs::File>,
     first_time_saving: bool,
 }
 
@@ -84,17 +84,18 @@ impl<T: ColType> ColData<T>
         self.n_rows
     }
 
-    fn _read_new_data(
+    async fn _read_new_data(
         buf_idx: &mut usize, 
         bytes_read: &mut usize,
         size_read: &mut usize,
         header: &mut ColHeader,
+        remaining_files: &mut VecDeque<&str>,
         buf: &mut [u8; BUF_SIZE],    
-        f: &mut File
+        f: &mut tokio_fs::File
     ) -> Result<bool, DbError>
     {
         *buf_idx = 0;
-        *bytes_read = f.read(buf)?;
+        *bytes_read = f.read(buf).await?;
 
         // Here we just add bytes_read since we are not reading header data now
         *size_read += *bytes_read;
@@ -102,7 +103,7 @@ impl<T: ColType> ColData<T>
         if *size_read > header.size_of_data() as usize
         {
             return Err(DbError::SizeMismatch {
-                msg: "ColData::_read_new_data - Size of data read exceeds size stored in file header".to_string(),
+                msg: format!("ColData::_read_new_data - Size of data read from file of column: {} exceeds size stored in file header", header.col_name()),
                 size_1: *size_read,
                 size_2: header.size_of_data() as usize
             });
@@ -110,18 +111,14 @@ impl<T: ColType> ColData<T>
 
         if *bytes_read == 0 
         {
-            if header.is_overflow()
+            if let Some(file_path) = remaining_files.pop_front()
             {
-                // If overflow, this means that there are more files 
-                // for this column. Here we will open next file, 
-                // create new header and continue reading from buffer
-                *f = ColData::<T>::_continue_to_next_file(
-                                                    header, 
-                                                    buf_idx, 
-                                                    bytes_read, 
-                                                    buf)?;
+                *f = tokio_fs::File::open(file_path).await?;
+                *bytes_read = f.read(buf).await?;
+                *buf_idx = 0;
+                *header = ColHeader::create_header_from_buf(buf_idx, *bytes_read, buf)?;
                 // We need to substract buf_idx since first bytes we read from
-                // file are headers bytes, thus nbr of bytes of data we read
+                // file are headers bytes, thus nbr of data bytes we read
                 // is bytes_read - buf_idx 
                 *size_read = *bytes_read - *buf_idx;
             }
@@ -135,6 +132,7 @@ impl<T: ColType> ColData<T>
                 return Ok(true);
             }
         }
+        // Still some data left to read
         return Ok(false);
     }
 
@@ -143,54 +141,58 @@ impl<T: ColType> ColData<T>
     /// - Function appends bytes_read bytes to a given file
     /// - If given file has to little space, it creates new one while also 
     /// updating metadata and creating new ColHeader object
-    fn _save_data_chunk_to_file(
+    async fn _save_data_chunk_to_file(
         &mut self,
-        mut f: File,            
+        mut f: tokio_fs::File,            
         bytes_read: usize,
         buf: &[u8],
-    ) ->Result<File, DbError>
+    ) ->Result<tokio_fs::File, DbError>
     {
         match self.header.increase_data_size(bytes_read as u32)
         {
             Ok(_) => {
                 // We will append to a file so we always know were to write
-                f.seek(SeekFrom::End(0))?;
-                f.write(&buf[..bytes_read])?;
+                f.seek(SeekFrom::End(0)).await?;
+                f.write(&buf[..bytes_read]).await?;
                 return Ok(f);
             }
-            Err(free_space_size) => {
+            Err(available_space) => {
 
                 // we save updated col_header to a file
-                self.header.modify_data_size_in_file(&mut f)?;
+                self.header.modify_data_size_in_file(&mut f).await?;
 
                 // Not enough free space in file, thus we will save as much as 
                 // we can and will create a new file 
-                f.seek(SeekFrom::End(0))?;
-                f.write(&buf[..free_space_size])?;
+                f.seek(SeekFrom::End(0)).await?;
+                f.write(&buf[..available_space]).await?;
 
                 // We no longer need old col_header, we will write to a new file
                 self.header = self.header.create_next()?;
-                let (_, new_f) = self.header.save_to_file(DB_DATA_DIR)?;
+                let (_, mut new_f) = self.header.save_to_file(DB_DATA_DIR).await?;
 
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                // !!!!! TODO: REMEMBER TO UPDATE METADATA !!!!!!
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // We do save
+                let bytes_read: usize = bytes_read - available_space;
+                
+                self.header.increase_data_size(bytes_read as u32).unwrap();
+                new_f.seek(SeekFrom::End(0)).await?;
+                new_f.write(&buf[available_space..bytes_read]).await?;
 
-                // And now we recursively invoke this function, since now we 
-                // will go into OK branch
-                return self._save_data_chunk_to_file(
-                    new_f, 
-                    bytes_read - free_space_size, 
-                    &buf[free_space_size..bytes_read]);
+                return Ok(new_f);
+
+                // We dont want recursion
+                // return Box::pin(self._save_data_chunk_to_file(
+                //     new_f, 
+                //     bytes_read - free_space_size, 
+                //     &buf[free_space_size..bytes_read])).await;
             }
         }
     }
 
-    fn _do_the_save(
+    async fn _do_the_save(
         &mut self,
         vals: &[u8],
-        mut f: File,
-    ) -> Result<File, DbError>
+        mut f: tokio_fs::File,
+    ) -> Result<tokio_fs::File, DbError>
     {
         let mut buf = [0u8; BUF_SIZE];
         let mut buf_idx = 0;
@@ -215,7 +217,7 @@ impl<T: ColType> ColData<T>
                 f = self._save_data_chunk_to_file(
                     f, 
                     bytes_read, 
-                    &buf)?;
+                    &buf).await?;
 
                 buf_idx = 0;
             }
@@ -227,42 +229,25 @@ impl<T: ColType> ColData<T>
             f = self._save_data_chunk_to_file(
                 f, 
                 buf_idx, 
-                &buf)?;
+                &buf).await?;
         }
 
         // TODO: add variable that checks this
         // We might have not updated data in header so we do it now to be sure
-        self.header.modify_data_size_in_file(&mut f)?;
+        self.header.modify_data_size_in_file(&mut f).await?;
 
         Ok(f)
     }
 
-    fn _continue_to_next_file(
-        col_h: &mut ColHeader, 
-        buf_idx: &mut usize,
-        bytes_read: &mut usize,
-        buf: &mut [u8; BUF_SIZE],
-    ) -> Result<File, DbError>
+    async fn _get_file_handle(&mut self) -> Result<tokio_fs::File, DbError>
     {
-        let mut f = File::open(col_h.get_next_file_path()?)?;
-
-        *bytes_read = f.read(buf)?;
-        *buf_idx = 0;
-
-        *col_h = ColHeader::read_from_buf(buf_idx, *bytes_read, buf)?;
-
-        Ok(f)
-    }
-
-    fn _get_file_handle(&mut self) -> Result<File, DbError>
-    {
-        let f: File;
+        let f: tokio_fs::File;
         if self.first_time_saving
         {
             self.first_time_saving = false;
 
             // we get file handle to created file, to which we will append data
-            (_, f) = self.header.save_to_file(DB_DATA_DIR)?;
+            (_, f) = self.header.save_to_file(DB_DATA_DIR).await?;
         }
         else 
         {
@@ -274,12 +259,11 @@ impl<T: ColType> ColData<T>
             }
             else 
             {
-                f = File::open(self.header.get_file_path())?;
+                f = tokio_fs::File::open(self.header.get_file_path()).await?;
             }
         }
         Ok(f)
     }
-
 }
 
 impl ColData<i64>
@@ -287,16 +271,18 @@ impl ColData<i64>
     // ########################################################################
     // ############################# PUBLIC API ###############################
     // ########################################################################
-    pub fn read_from_file(mut f: File) -> Result<ColData<i64>, DbError>
+    pub async fn read_from_file(
+        mut remaining_files: VecDeque<&str>,
+        mut f: tokio_fs::File,
+    ) -> Result<ColData<i64>, DbError>
     {
-        // TODO: ADD PROPER ERROR HANDLIIIING with my-defined Errors
         let mut buf = [0 as u8; BUF_SIZE];
         let mut bytes_read;
         let mut buf_idx = 0;
 
-        bytes_read = f.read(&mut buf)?;
+        bytes_read = f.read(&mut buf).await?;
 
-        let mut header = ColHeader::read_from_buf(
+        let mut header = ColHeader::create_header_from_buf(
             &mut buf_idx, 
             bytes_read, 
             &buf
@@ -321,9 +307,10 @@ impl ColData<i64>
                     &mut bytes_read, 
                     &mut size_data_bytes_read, 
                     &mut header, 
+                    &mut remaining_files,
                     &mut buf, 
                     &mut f
-                )?;
+                ).await?;
 
                 if is_break {break;}
             }
@@ -374,18 +361,20 @@ impl ColData<i64>
     /// - DB manager will read strings from files, convert BATCH_SIZE of them 
     /// into vector of i64 and we will get this vector and will need to 
     /// serialize it and save to file
-    pub fn save_to_file(&mut self, ints: &[i64]) -> Result<(), DbError>
+    pub async fn save_to_file(&mut self, ints: &[i64]) -> Result<(), DbError>
     {
-        // TODO: better error handling
         if ints.len() > BATCH_SIZE
         {
-            panic!("ColData - save_to_file - vector of data has greater size than BATCH_SIZE");
+            return Err(DbError::SizeExceeded{
+                msg: format!("ColData<INT64> - save_to_file - provided vector of ints has greater size: '{}' than BATCH_SIZE", ints.len()),
+                max: BATCH_SIZE
+            });
         }
 
-        let mut f: File = self._get_file_handle()?;
+        let mut f = self._get_file_handle().await?;
         let ints_encoded = ColData::_vle_encode(ints)?;
 
-        f = self._do_the_save(&ints_encoded, f)?;
+        f = self._do_the_save(&ints_encoded, f).await?;
 
         self.file_handle = Some(f);
 
@@ -463,16 +452,18 @@ impl ColData<i64>
 
 impl ColData<String>
 {
-    pub fn read_from_file(mut f: File) -> Result<ColData<String>, DbError>
+    pub async fn read_from_file(
+        mut f: tokio_fs::File, 
+        mut remaining_files: VecDeque<&str>
+    ) -> Result<ColData<String>, DbError>
     {
-        // TODO: ADD PROPER ERROR HANDLIIIING with my-defined Errors
         let mut buf = [0 as u8; BUF_SIZE];
         let mut bytes_read;
         let mut buf_idx = 0;
 
-        bytes_read = f.read(&mut buf)?;
+        bytes_read = f.read(&mut buf).await?;
 
-        let mut header = ColHeader::read_from_buf(
+        let mut header = ColHeader::create_header_from_buf(
                                             &mut buf_idx, 
                                             bytes_read, 
                                             &buf
@@ -508,9 +499,10 @@ impl ColData<String>
                     &mut bytes_read, 
                     &mut size_data_bytes_read, 
                     &mut header, 
+                    &mut remaining_files,
                     &mut buf, 
                     &mut f
-                )?;
+                ).await?;
 
                 if is_break {break;}
             }
@@ -578,7 +570,7 @@ impl ColData<String>
         })
     }
 
-    pub fn save_to_file(&mut self, strings: &[String]) -> Result<(), DbError>
+    pub async fn save_to_file(&mut self, strings: &[String]) -> Result<(), DbError>
     {
         if strings.len() > BATCH_SIZE
         {
@@ -588,10 +580,9 @@ impl ColData<String>
             });
         }
 
-        let mut f: File = self._get_file_handle()?;
+        let mut f = self._get_file_handle().await?;
         let strs_encoded = ColData::_zstd_encode(strings)?;
-
-        f = self._do_the_save(&strs_encoded, f)?;
+        f = self._do_the_save(&strs_encoded, f).await?;
 
         self.file_handle = Some(f);
 

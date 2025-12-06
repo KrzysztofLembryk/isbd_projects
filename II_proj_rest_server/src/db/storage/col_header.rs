@@ -2,9 +2,8 @@ use crate::db::constants::{LogicalColType, DB_DATA_DIR, MAGIC_WORD, MAX_FILE_SIZ
 use crate::db::storage::string_handlers::{StrLenCheckType, read_string_from_buf, check_col_name_correctness};
 use crate::db::errors::{DbError};
 
-use std::io::{Write};
-use std::fs::File;
-use std::io::{Seek, SeekFrom};
+use tokio::fs as tokio_fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, AsyncSeek, SeekFrom, AsyncSeekExt};
 use std::mem;
 use std::fmt;
 
@@ -19,8 +18,7 @@ pub struct ColHeader
     col_id: u16,        // equal to file number - we may have many files for 
                         // one column
     col_type: LogicalColType,
-    is_overflow: bool,  // tells us if there are more files with this col data
-                        // last file in sequence will have it set to false
+    is_overflow: bool,  // OBSOLETE
     size_of_data: u32,  // size of data without metadata
     col_name: String    // max 255 characters
 }
@@ -79,10 +77,10 @@ impl ColHeader
     ///       already exists, this function should be invoked only once when 
     ///       creating column file for the first time
     /// - We do not encode column header data
-    pub fn save_to_file(
+    pub async fn save_to_file(
         &self, 
         dir_path: &str
-    ) -> Result<(String, File), DbError>
+    ) -> Result<(String, tokio_fs::File), DbError>
     {
         if dir_path.len() == 0
         {
@@ -103,7 +101,7 @@ impl ColHeader
             file_name = format!("{}/{}_{}", dir_path, self.col_name, self.col_id);
         }
 
-        let mut f = File::create(&file_name)?;
+        let mut f = tokio_fs::File::create(&file_name).await?;
 
         let null_terminator = [b'\0'];
         let header_size = mem::size_of_val(&self.magic_word)
@@ -132,9 +130,10 @@ impl ColHeader
             }
         };
         
-        f.write(&self.magic_word.to_be_bytes())?;
-        f.write(&self.col_id.to_be_bytes())?;
-        f.write(&LogicalColType::to_u8(&self.col_type).to_be_bytes())?;
+        // TODO: do it in one write
+        f.write(&self.magic_word.to_be_bytes()).await?;
+        f.write(&self.col_id.to_be_bytes()).await?;
+        f.write(&LogicalColType::to_u8(&self.col_type).to_be_bytes()).await?;
 
         let is_overflow: u8 = self.is_overflow
             .try_into()
@@ -142,31 +141,40 @@ impl ColHeader
                 "ColHeader::save_to_file - failed to convert bool to u8".to_string()
             ))?;
 
-        f.write(&is_overflow.to_be_bytes())?;
-        f.write(&self.size_of_data.to_be_bytes())?;
+        f.write(&is_overflow.to_be_bytes()).await?;
+        f.write(&self.size_of_data.to_be_bytes()).await?;
 
         // When saving strings to files we need to add null termination '\0'
         // to the end of string, since rust uses pointer+length encoding
-        f.write(&self.col_name.as_bytes())?;
-        f.write(&null_terminator)?;
+        f.write(&self.col_name.as_bytes()).await?;
+        f.write(&null_terminator).await?;
 
-        f.flush()?;
+        f.flush().await?;
 
         Ok((file_name, f))
     }
     
-    pub fn read_from_buf(
+    pub fn create_header_from_buf(
         curr_buf_idx: &mut usize,
         bytes_read: usize,
         buf: &[u8],
     ) -> Result<ColHeader, DbError>
     {
-        // TODO: add better checking if we haave enough bytes to read
-        if (bytes_read - *curr_buf_idx) < COL_HEADER_MIN_SIZE
+        let remaining_bytes = match bytes_read.checked_sub(*curr_buf_idx) {
+            Some(remaining) => remaining,
+            None => {
+                return Err(DbError::Other(
+                    format!("ColHeader::create_header_from_buf - buffer index ({}) exceeds bytes read ({})", 
+                        curr_buf_idx, bytes_read)
+                ));
+            }
+        };
+
+        if remaining_bytes < COL_HEADER_MIN_SIZE
         {
             return Err(DbError::SizeMismatch {
-                msg: "ColHeader::read_from_buf - insufficient bytes to read header".to_string(),
-                size_1: bytes_read - *curr_buf_idx,
+                msg: "ColHeader::create_header_from_buf - insufficient bytes to read header".to_string(),
+                size_1: remaining_bytes,
                 size_2: COL_HEADER_MIN_SIZE
             });
         }
@@ -250,10 +258,10 @@ impl ColHeader
         {
             None => {
                 self.is_overflow = true;
-                let diff = MAX_FILE_SIZE - self.size_of_data;
+                let available_free_space = MAX_FILE_SIZE - self.size_of_data;
                 self.size_of_data = MAX_FILE_SIZE;
 
-                return Err(diff as usize);
+                return Err(available_free_space as usize);
             },
             Some(new_size) => {
                 if new_size <= MAX_FILE_SIZE 
@@ -263,10 +271,10 @@ impl ColHeader
                 else 
                 {
                     self.is_overflow = true;
-                    let diff = MAX_FILE_SIZE - self.size_of_data;
+                    let available_free_space = MAX_FILE_SIZE - self.size_of_data;
                     self.size_of_data = MAX_FILE_SIZE;
 
-                    return Err(diff as usize);
+                    return Err(available_free_space as usize);
                 }
             }
         };
@@ -276,20 +284,20 @@ impl ColHeader
         Ok(())
     }
 
-    pub fn modify_data_size_in_file(
+    pub async fn modify_data_size_in_file(
         &self, 
-        f: &mut File, 
+        f: &mut tokio_fs::File, 
     ) -> Result<(), DbError>
     {
         if self.is_overflow
         {
-            f.seek(SeekFrom::Start(COL_HEADER_OVERFLOW_OFFSET))?;
+            f.seek(SeekFrom::Start(COL_HEADER_OVERFLOW_OFFSET)).await?;
             let x: u8 = self.is_overflow as u8;
-            f.write(&x.to_be_bytes())?;
+            f.write(&x.to_be_bytes()).await?;
         }
         
-        f.seek(SeekFrom::Start(COL_HEADER_DATA_SIZE_OFFSET))?;
-        f.write(&self.size_of_data.to_be_bytes())?;
+        f.seek(SeekFrom::Start(COL_HEADER_DATA_SIZE_OFFSET)).await?;
+        f.write(&self.size_of_data.to_be_bytes()).await?;
 
         Ok(())
     }

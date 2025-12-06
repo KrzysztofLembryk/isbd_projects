@@ -12,7 +12,7 @@ use crate::db::errors::{DbError};
 use crate::db::constants::{MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX, MAX_ALLOWED_METADATA_CHANGES};
 use crate::db::manager::messages::{CopyQData, QueryData, SelectQData};
 use crate::schemas::table::{TableSchema, ShallowTable};
-use crate::schemas::query::{AllowedQuery, QueryTableName, Query, QueryStatus};
+use crate::schemas::query::{AllowedQuery, Query, QueryResult, QueryStatus, QueryTableName};
 use crate::schemas::column::{Column};
 
 #[cfg(test)]
@@ -612,6 +612,19 @@ impl TableMetadata
     pub fn table_id(&self) -> &Uuid
     {
         &self.table_id
+    }
+
+    pub fn read_table(&self) -> QueryResult
+    {
+        let mut row_count: i32 = 0;
+        let mut q_res = QueryResult::new(row_count, vec![]);
+
+        for col_meta in &self.columns
+        {
+
+        }
+
+        todo!("implement read_table")
     }
 }
 

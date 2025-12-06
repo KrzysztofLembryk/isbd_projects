@@ -213,4 +213,9 @@ impl QueryResult
     {
         QueryResult { row_count, columns }
     }
+
+    pub fn push_col_data(&mut self, col_data: DataColumn)
+    {
+        self.columns.push(col_data);
+    }
 }

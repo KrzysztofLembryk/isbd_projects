@@ -37,10 +37,10 @@ async fn get_queries(
                     HttpResponse::NotFound()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
-                        .body("get_tables: got Wrong message from db"),
+                        .json("get_tables: got Wrong message from db"),
             }
         },
-        None => HttpResponse::InternalServerError().body("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
     };
 }
 
@@ -109,10 +109,10 @@ async fn post_query(
                     HttpResponse::NotFound()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
-                        .body("get_tables: got Wrong message from db"),
+                        .json("get_tables: got Wrong message from db"),
             }
         },
-        None => HttpResponse::InternalServerError().body("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
     };
 }
 

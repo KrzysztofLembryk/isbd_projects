@@ -1,7 +1,11 @@
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::{db::manager::messages::{DbCmd, DbWorkerMsg, QueryCompletionMsg, QueryData, QueryFailureMsg}, schemas::{error::{Error, MultipleProblemsError, Problem}, query::QueryResult}};
+use crate::db::manager::messages::{DbCmd, DbWorkerMsg, QueryCompletionMsg, QueryData, QueryFailureMsg, SelectQData}; 
+use crate::db::storage::metadata::{TableMetadata};
+use crate::schemas::query::QueryResult;
+use crate::schemas::error::{Error, MultipleProblemsError, Problem};
 
+use log::{info, warn, debug, error};
 
 pub struct QueryWorker
 {
@@ -30,7 +34,7 @@ impl QueryWorker
                 DbWorkerMsg::DoQuery(worker_id, q_data) => {
                     if worker_id != self.id
                     {
-                        println!("Got wrong worker_id, this query should Fail");
+                        warn!("Got wrong worker_id, this query should Fail");
                     }
                     else 
                     {
@@ -40,11 +44,11 @@ impl QueryWorker
                     }
                 },
                 DbWorkerMsg::Shutdown => {
-                    println!("Worker '{}' is shutting down", self.id);
+                    debug!("Worker '{}' is shutting down", self.id);
                     break;
                 },
                 _ => {
-                    println!("Worker '{}' got unsupported msg, Doing nothig", self.id);
+                    warn!("Worker '{}' got unsupported msg, Doing nothig", self.id);
                 }
             }
         }
@@ -92,6 +96,24 @@ impl QueryWorker
                 ));
             },
         }
+    }
+
+    fn handle_select(s_q: SelectQData)
+    {
+        let table_meta: &TableMetadata = s_q.table_metadata();
+        let query_id = s_q.query_id();
+        let query_result = table_meta.read_table();
+
+
+
+
+
+
+        let completion_msg = QueryCompletionMsg::new(
+            *query_id, 
+            *table_meta.table_id(), 
+            Some(QueryResult::new(0, vec![]))
+        );
     }
 
     fn send_msg_to_db(&self, msg: DbWorkerMsg)
