@@ -11,6 +11,7 @@ pub enum DbError {
     ColumnTypeMismatch(String),
     SizeExceeded { msg: String, max: usize},
     SizeMismatch {  msg: String, size_1: usize, size_2: usize },
+    WrongSize(String),
     CompressionError(String),
     DecompressionError(String),
     UnsupportedType(String),
@@ -30,6 +31,9 @@ impl fmt::Display for DbError {
             },
             DbError::SizeMismatch { msg, size_1, size_2 } => {
                 write!(f, "{}. Size mismatch: size1={}, size2={}", msg, size_1, size_2)
+            },
+            DbError::WrongSize(msg) => {
+                write!(f, "WrongSize: {}", msg)
             },
             DbError::CompressionError(msg) => write!(f, "Compression error: {}", msg),
             DbError::DecompressionError(msg) => write!(f, "Decompression error: {}", msg),

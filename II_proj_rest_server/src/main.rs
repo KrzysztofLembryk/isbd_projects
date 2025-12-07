@@ -15,10 +15,12 @@ use log::LevelFilter;
 #[actix_web::main]
 async fn main() -> std::io::Result<()>
 {
+    // Logging
     Builder::new()
         .filter_level(LevelFilter::Debug)
         .format_timestamp_millis()
         .init();
+
     // STREAMING large amounts of data Actix:
     // https://github.com/actix/actix-web/issues/1653
 
@@ -34,7 +36,6 @@ async fn main() -> std::io::Result<()>
 
     HttpServer::new(move || {
         let db_client = create_db_client(tx_db.clone());
-
         App::new()
             // db_client will be local for each thread
             .app_data(web::Data::new(tokio::sync::RwLock::new(db_client)))

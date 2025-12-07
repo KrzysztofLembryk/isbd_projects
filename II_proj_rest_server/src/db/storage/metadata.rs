@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::{result, vec};
 use regex::Regex;
@@ -11,9 +11,10 @@ use tokio::fs as t_fs;
 use crate::db::errors::{DbError};
 use crate::db::constants::{MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX, MAX_ALLOWED_METADATA_CHANGES};
 use crate::db::manager::messages::{CopyQData, QueryData, SelectQData};
+use crate::db::storage::col_data::ColData;
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::schemas::query::{AllowedQuery, Query, QueryResult, QueryStatus, QueryTableName};
-use crate::schemas::column::{Column};
+use crate::schemas::column::{Column, DataColumn, Int64Column, VarcharColumn};
 
 #[cfg(test)]
 #[path = "../tests/storage/test_metadata.rs"]
@@ -357,10 +358,37 @@ impl DbMetadata
 
     pub fn decrease_nbr_of_queries_operating_on_table(
         &mut self, 
-        table_id: &Uuid
+        // TODO: add enum here
+        table_id: Option<&Uuid>,
+        table_name: Option<&str>
     ) -> Result<(), DbError>
     {
-        // TODO: add proper error handling
+        if let Some(table_id) = table_id
+        {
+            return self.do_queries_decrease(table_id);
+        }
+
+        if let Some(table_name) = table_name
+        {
+            let table_id = self.table_name_to_id_map.get(table_name);
+
+            if let Some(table_id) = table_id
+            {
+                // Clone so that borrow checker doesnt complain about immutable 
+                // ref while having mutable ref
+                return self.do_queries_decrease(&table_id.clone());
+            }
+            else 
+            {
+                return Err(DbError::NotFound(format!("DbMetadata::decrease_nbr_of_queries_operating: provided table name: '{}' does not exist in database", table_name)));
+            }
+        }
+
+        return Err(DbError::Other(format!("DbMetadata::decrease_nbr_of_queries_operating: both table_name and table_id are None")));
+    }
+
+    fn do_queries_decrease(&mut self, table_id: &Uuid) -> Result<(), DbError>
+    {
         if let Some(t_state) = self.tables_states.get_mut(table_id)
         {
             if t_state.n_queries_operating_on_table > 0
@@ -609,22 +637,106 @@ impl TableMetadata
         &self.table_name
     }
 
-    pub fn table_id(&self) -> &Uuid
+    pub fn table_id(&self) -> Uuid
     {
-        &self.table_id
+        self.table_id
     }
 
-    pub fn read_table(&self) -> QueryResult
+    pub async fn read_table(&self) -> Result<(QueryResult, i32), DbError>
     {
-        let mut row_count: i32 = 0;
-        let mut q_res = QueryResult::new(row_count, vec![]);
+        let mut row_count: Option<i32> = None;
+        let mut q_res = QueryResult::new(0, vec![]);
 
         for col_meta in &self.columns
         {
+            let mut file_queue: VecDeque<&str> = VecDeque::new();
 
+            for path in &col_meta.c_files
+            {
+                file_queue.push_back(path);
+            }
+
+            match col_meta.c_type 
+            {
+                LogicalColType::INT64 => {
+
+                    let col_data = ColData::<i64>
+                        ::read_from_file(file_queue)
+                        .await?;
+
+                    TableMetadata::check_row_count(
+                        &mut row_count, 
+                        col_data.n_rows(), 
+                        &self.table_name
+                    )?;
+
+                    let col_data = DataColumn::Int64(
+                        Int64Column::new(col_data.data())
+                    );
+
+                    q_res.push_col_data(col_data);
+
+                },
+                LogicalColType::VARCHAR => {
+
+                    let col_data = ColData::<String>::read_from_file(file_queue).await?;
+
+                    TableMetadata::check_row_count(
+                        &mut row_count, 
+                        col_data.n_rows(), 
+                        &self.table_name
+                    )?;
+
+                    let col_data = DataColumn::Varchar(VarcharColumn::new(col_data.data()));
+                    q_res.push_col_data(col_data);
+                }
+            }
         }
 
-        todo!("implement read_table")
+        match row_count
+        {
+            None => {
+                // Something is corrupted in our db, since in put_table endpoint
+                // we do not allow table schemas without columns
+                return Err(DbError::InternalDbError(format!("TableMetadata::read_table - final row_count is NONE, this means that table has zero columns, we do not allow that in our db")));
+            },
+            Some(row_count) => {
+                return Ok((q_res, row_count));
+            }
+        }
+    }
+
+    fn check_row_count(
+        row_count: &mut Option<i32>, 
+        curr_col_rows: usize,
+        table_name: &str
+    ) -> Result<(), DbError>
+    {
+        match row_count
+        {
+            None => {
+                if curr_col_rows > i32::MAX as usize
+                {
+                    // This shouldnt happen if all our db files are not corrupted
+                    return Err(DbError::InternalDbError(
+                        format!("TableMEtadata:: nbr of rows in table greater than i32")
+                    ));
+                }
+                *row_count = Some(curr_col_rows as i32);
+            },
+            Some(val) => {
+                if *val as usize != curr_col_rows
+                {
+                    // This shouldnt happen if all our db files are not corrupted
+                    return Err(DbError::InternalDbError( 
+                        format!("Table: '{}' has columns with different number of rows: {} != {}",
+                        table_name, *val, curr_col_rows ))
+                    );
+                }
+            }
+        }
+
+        return Ok(());
     }
 }
 
@@ -791,6 +903,12 @@ fn table_schema_into_columns_vec(
             }
         );
     }
+
+    if columns.is_empty()
+    {
+        return Err(DbError::WrongSize(format!("Table: {} has 0 columns, we do not allow that in our DB", schema.name())));
+    }
+
     Ok(columns)
 }
 

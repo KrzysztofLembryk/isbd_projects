@@ -155,15 +155,22 @@ impl ColHeader
     }
     
     pub fn create_header_from_buf(
+        expected_col_type: LogicalColType,
         curr_buf_idx: &mut usize,
         bytes_read: usize,
         buf: &[u8],
     ) -> Result<ColHeader, DbError>
     {
+        // We will treat all errors as internal db errors since we assume that
+        // we will read ONLY db files, and since we created them, they are 
+        // correcct, if not this means our db has corrupted files inside its 
+        // directories (i.e. sb modified them), therefore we shouldnt allow our 
+        // db to run in corrupted state
         let remaining_bytes = match bytes_read.checked_sub(*curr_buf_idx) {
             Some(remaining) => remaining,
             None => {
-                return Err(DbError::Other(
+                // This should never happen
+                return Err(DbError::InternalDbError(
                     format!("ColHeader::create_header_from_buf - buffer index ({}) exceeds bytes read ({})", 
                         curr_buf_idx, bytes_read)
                 ));
@@ -172,39 +179,47 @@ impl ColHeader
 
         if remaining_bytes < COL_HEADER_MIN_SIZE
         {
-            return Err(DbError::SizeMismatch {
-                msg: "ColHeader::create_header_from_buf - insufficient bytes to read header".to_string(),
-                size_1: remaining_bytes,
-                size_2: COL_HEADER_MIN_SIZE
-            });
+            return Err(DbError::InternalDbError(
+                format!("ColHeader::create_header_from_buf - insufficient bytes to read header, remaining bytes: {}, col header min size: {}", 
+                remaining_bytes,
+                COL_HEADER_MIN_SIZE
+            )));
         }
 
         // TODO: add dynamic buff idx calculations based on variables lengths
         let magic_word = u32::from_be_bytes(
                     buf[..4]
                     .try_into()
-                    .map_err(|_| DbError::Other(
+                    .map_err(|_| DbError::InternalDbError(
                         "ColHeader::read_from_buf - failed to read magic word (expected 4 bytes)".to_string()
                     ))?);
 
         if magic_word != MAGIC_WORD
         {
-            return Err(DbError::Other(
+            return Err(DbError::InternalDbError(
                 format!("ColHeader::read_from_buf - invalid magic word: expected 0x{:X}, got 0x{:X}", 
                     MAGIC_WORD, magic_word)
             ));
         }
 
+        // TODO: we probably should have expected_col_id and check if they are equal
         let col_id = u16::from_be_bytes(
                             buf[4..6]
                             .try_into()
-                            .map_err(|_| DbError::Other(
+                            .map_err(|_| DbError::InternalDbError(
                                 "ColHeader::read_from_buf - failed to read col_id (expected 2 bytes)".to_string()
                             ))?);
         let col_type = LogicalColType::from_u8(buf[6])
-                            .map_err(|e| DbError::UnsupportedType(
-                                format!("ColHeader::read_from_buf - {}", e)
+                            .map_err(|e| DbError::InternalDbError(
+                                format!("ColHeader::read_from_buf - failed to read col_type {}", e)
                             ))?;
+        if col_type != expected_col_type
+        {
+            return Err(DbError::InternalDbError(
+                format!("ColHeader::read_from_buf - from file we read column type: {}, but we expected: {}", 
+                    col_type, expected_col_type)
+            ));
+        }
 
         let is_overflow: bool = buf[7] == 1;
 
@@ -212,7 +227,7 @@ impl ColHeader
         let size_of_data = u32::from_be_bytes(
                     buf[8..12]
                     .try_into()
-                    .map_err(|_| DbError::Other(
+                    .map_err(|_| DbError::InternalDbError(
                         "ColHeader::read_from_buf - failed to read size_of_data (expected 4 bytes)".to_string()
                     ))?);
 

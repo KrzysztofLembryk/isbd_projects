@@ -79,7 +79,7 @@ pub fn read_string_from_buf(
         // one thus we need to check that again when reading.
         if !c.is_ascii()
         {
-            return Err(DbError::Other("read_string_from_buf: we've read not an ASCII character".to_string()));
+            return Err(DbError::InternalDbError("read_string_from_buf: we've read not an ASCII character".to_string()));
         }
 
         res_str.push(c as char);
@@ -97,7 +97,7 @@ pub fn read_string_from_buf(
             && res_str.len() > MAX_STR_DATA_LEN
         {
             return Err(DbError::SizeExceeded{
-                msg: format!("read_string_from_buf: res_str"), 
+                msg: format!("read_string_from_buf: VARCHAR has too big size({}), we do not allow such string size in our database", res_str.len()), 
                 max: MAX_STR_DATA_LEN
             });
         }

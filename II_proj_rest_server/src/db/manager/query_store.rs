@@ -101,7 +101,7 @@ impl QueryStore
             q.update_status(new_status);
             return Ok(());
         }
-        Err(DbError::NotFound(format!("QueryStore::update_query_status: query with id: '{}'", q_id)))
+        Err(DbError::InternalDbError(format!("QueryStore::update_query_status: query with id: '{}'", q_id)))
     }
 
 }

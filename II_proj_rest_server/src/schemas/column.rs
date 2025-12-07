@@ -1,3 +1,4 @@
+use actix_web::http::header::VARY;
 use serde;
 use std::fmt;
 use crate::db::constants::LogicalColType;
@@ -59,11 +60,27 @@ impl fmt::Display for Column {
 #[derive(serde::Serialize, Clone)]
 pub struct Int64Column
 {
-    values: Option<Vec<i64>>
+    values: Vec<i64>
+}
+
+impl Int64Column
+{
+    pub fn new(values: Vec<i64>) -> Int64Column
+    {
+        Int64Column { values }
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
 pub struct VarcharColumn
 {
-    values: Option<Vec<String>>
+    values: Vec<String>
+}
+
+impl VarcharColumn
+{
+    pub fn new(values: Vec<String>) -> VarcharColumn
+    {
+        VarcharColumn { values }
+    }
 }

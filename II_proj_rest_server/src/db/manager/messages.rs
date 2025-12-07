@@ -11,6 +11,7 @@ use tokio::sync::mpsc::{UnboundedSender};
 /// Conn means Connection
 type ConnId = Uuid;
 type WorkerId = usize;
+type QueryId = usize;
 
 pub enum DbCmd
 {
@@ -21,9 +22,10 @@ pub enum DbCmd
 
 pub enum DbWorkerMsg
 {
-    DoQuery(WorkerId, QueryData),
+    ExecQuery(WorkerId, QueryData),
     QueryCompleted(WorkerId, QueryCompletionMsg),
     QueryFailed(WorkerId, QueryFailureMsg),
+    InternalError(WorkerId, QueryFailureMsg),
     Shutdown
 }
 
@@ -96,6 +98,7 @@ pub struct QueryCompletionMsg
 {
     query_id: Uuid,
     table_id: Uuid, 
+    n_rows: i32,
     // If is None, this means it was CopyQuery
     // otherwise it was SelectQuery
     res: Option<QueryResult>,
@@ -106,10 +109,11 @@ impl QueryCompletionMsg
     pub fn new(
         query_id: Uuid,
         table_id: Uuid,
+        n_rows: i32,
         res: Option<QueryResult>
     ) -> QueryCompletionMsg
     {
-        QueryCompletionMsg { query_id, table_id, res }
+        QueryCompletionMsg { query_id, table_id, n_rows, res }
     }
 
     pub fn table_id(&self) -> Uuid
@@ -128,17 +132,57 @@ impl QueryCompletionMsg
     }
 }
 
+pub trait BaseQueryDataInfo
+{
+    fn query_id(&self) -> Uuid;
+    fn table_id(&self) -> Uuid;
+}
+
 pub enum QueryData
 {
     SelectQ(SelectQData),
     CopyQ(CopyQData)
 }
+
+impl BaseQueryDataInfo for QueryData
+{
+    fn query_id(&self) -> Uuid
+    {
+        match self
+        {
+            Self::SelectQ(q) => q.query_id(),
+            Self::CopyQ(q) => q.query_id(),
+        }
+    }
+
+    fn table_id(&self) -> Uuid
+    {
+        match self
+        {
+            Self::SelectQ(q) => q.table_id(),
+            Self::CopyQ(q) => q.table_id(),
+        }
+    }
+}
+
 // TODO: move below struct implementation to separate file 
 #[derive(Debug)]
 pub struct SelectQData
 {
     query_id: Uuid,
     table_metadata: TableMetadata
+}
+
+impl BaseQueryDataInfo for SelectQData
+{
+    fn query_id(&self) -> Uuid{
+        self.query_id
+    }
+
+    fn table_id(&self) -> Uuid {
+        self.table_metadata.table_id()
+    }
+
 }
 
 impl SelectQData
@@ -148,16 +192,11 @@ impl SelectQData
         SelectQData { query_id, table_metadata }
     }
 
-    // TODO: These two func should be in trait
-    pub fn query_id(&self) -> &Uuid
-    {
-        &self.query_id
-    }
-
     pub fn table_metadata(&self) -> &TableMetadata
     {
         &self.table_metadata
     }
+    // TODO: These two func should be in trait
 }
 
 #[derive(Debug)]
@@ -166,6 +205,18 @@ pub struct CopyQData
     query_id: Uuid,
     copy_q: CopyQuery,
     table_metadata: TableMetadata
+}
+
+impl BaseQueryDataInfo for CopyQData
+{
+    fn query_id(&self) -> Uuid{
+        self.query_id
+    }
+
+    fn table_id(&self) -> Uuid {
+        self.table_metadata.table_id()
+    }
+
 }
 
 impl CopyQData
@@ -177,11 +228,6 @@ impl CopyQData
     ) -> CopyQData
     {
         CopyQData { query_id, copy_q, table_metadata }
-    }
-
-    pub fn query_id(&self) -> &Uuid
-    {
-        &self.query_id
     }
 
     pub fn table_metadata(&self) -> &TableMetadata

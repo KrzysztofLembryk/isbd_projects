@@ -66,7 +66,7 @@ impl WorkersManager
                             format!("WorkerrsManager::execute_query: db worker with id: '{}' does not exist", worker_id)
                         ))?;
 
-        worker.send_msg(DbWorkerMsg::DoQuery(worker_id, query))?;
+        worker.send_msg(DbWorkerMsg::ExecQuery(worker_id, query))?;
 
         Ok(())
     }
@@ -78,7 +78,7 @@ impl WorkersManager
             self.available_workers.insert(worker_id);
             return Ok(());
         }
-        Err(DbError::NotFound(format!("WorkersManager::free_worker - worker with id: {} does not exist", worker_id)))
+        Err(DbError::InternalDbError(format!("WorkersManager::free_worker - worker with id: {} does not exist", worker_id)))
     }
 
     pub fn is_any_worker_available(&self) -> bool

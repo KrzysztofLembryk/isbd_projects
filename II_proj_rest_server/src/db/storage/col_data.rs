@@ -1,13 +1,10 @@
 use tokio::fs as tokio_fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, AsyncSeek, SeekFrom, AsyncSeekExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, SeekFrom, AsyncSeekExt};
 use zstd;
 use std::collections::VecDeque;
 
 use crate::db::constants::{LogicalColType, BATCH_SIZE, BUF_SIZE, DB_DATA_DIR, ZSTD_ENCODE_LEVEL};
 use crate::db::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle_decode_i, vle_decode_u};
-
-// TODO: metadata should be updated when we save to file
-// use crate::storage::metadata_structs::DbMetadata;
 
 use crate::db::storage::col_header::ColHeader;
 use crate::db::errors::DbError;
@@ -54,7 +51,7 @@ pub struct ColData<T: ColType>
     header: ColHeader,
     data: Vec<T>,
     n_rows: usize,
-    result: ResType,
+    // result: ResType,
     file_handle: Option<tokio::fs::File>,
     first_time_saving: bool,
 }
@@ -73,7 +70,7 @@ impl<T: ColType> ColData<T>
             header: header,
             data: Vec::new(),
             n_rows: 0,
-            result: ResType::get_res_type::<T>(),
+            // result: ResType::get_res_type::<T>(),
             file_handle: None,
             first_time_saving: true
         })
@@ -82,6 +79,12 @@ impl<T: ColType> ColData<T>
     pub fn n_rows(&self) -> usize
     {
         self.n_rows
+    }
+
+    /// Function **consumes SELF**
+    pub fn data(self) -> Vec<T>
+    {
+        self.data
     }
 
     async fn _read_new_data(
@@ -116,7 +119,12 @@ impl<T: ColType> ColData<T>
                 *f = tokio_fs::File::open(file_path).await?;
                 *bytes_read = f.read(buf).await?;
                 *buf_idx = 0;
-                *header = ColHeader::create_header_from_buf(buf_idx, *bytes_read, buf)?;
+                *header = ColHeader::create_header_from_buf(
+                    T::col_type(),
+                    buf_idx, 
+                    *bytes_read, 
+                    buf
+                )?;
                 // We need to substract buf_idx since first bytes we read from
                 // file are headers bytes, thus nbr of data bytes we read
                 // is bytes_read - buf_idx 
@@ -272,17 +280,29 @@ impl ColData<i64>
     // ############################# PUBLIC API ###############################
     // ########################################################################
     pub async fn read_from_file(
-        mut remaining_files: VecDeque<&str>,
-        mut f: tokio_fs::File,
+        mut remaining_files: VecDeque<&str>
     ) -> Result<ColData<i64>, DbError>
     {
         let mut buf = [0 as u8; BUF_SIZE];
         let mut bytes_read;
         let mut buf_idx = 0;
 
+        let file_path = match remaining_files.pop_front()
+        {
+            Some(path) => path,
+            None => {
+                // put_table endpoint takes care of checking if provided 
+                // table schema has at least one column thus file paths
+                return Err(DbError::InternalDbError(format!("ColData<i64>::read_from_file: provided queue of file_paths is empty")));
+            }
+        };
+
+        let mut f = tokio_fs::File::open(file_path).await?;
+
         bytes_read = f.read(&mut buf).await?;
 
         let mut header = ColHeader::create_header_from_buf(
+            i64::col_type(),
             &mut buf_idx, 
             bytes_read, 
             &buf
@@ -290,22 +310,23 @@ impl ColData<i64>
 
         // Below var checks how many bytes of DATA we read, not metadata
         // thus we substract buf_idx since it now stores metadata count
-        let mut size_data_bytes_read = bytes_read - buf_idx;
+        let mut data_bytes_read = bytes_read - buf_idx;
         let mut bytes: Vec<u8> = Vec::new();
         let mut first_value = true;
         let mut result_vec: Vec<i64> = Vec::new();
         let mut min_val: i64 = 0;
         let mut n_rows: usize = 0;
-        let mut average: f64 = 0.0;
+        // let mut average: f64 = 0.0;
 
         loop 
         {
             if buf_idx >= bytes_read
             {
+                // Reads new data, if needed opens next file in queue
                 let is_break = ColData::<i64>::_read_new_data(
                     &mut buf_idx, 
                     &mut bytes_read, 
-                    &mut size_data_bytes_read, 
+                    &mut data_bytes_read, 
                     &mut header, 
                     &mut remaining_files,
                     &mut buf, 
@@ -317,7 +338,7 @@ impl ColData<i64>
 
             let byte = buf
                 .get(buf_idx)
-                .ok_or_else(|| DbError::Other(
+                .ok_or_else(|| DbError::InternalDbError(
                     format!("ColData<i64>::read_from_file - buf_idx {} out of bounds for buffer (len: {})", buf_idx, buf.len())
                 ))?;
             bytes.push(*byte);
@@ -333,8 +354,9 @@ impl ColData<i64>
 
                 result_vec.push(decoded_val);
 
-                average = ((average * n_rows as f64) + decoded_val as f64) 
-                        / ((n_rows + 1) as f64);
+                // average = ((average * n_rows as f64) + decoded_val as f64) 
+                //         / ((n_rows + 1) as f64);
+
                 n_rows += 1;
                 
                 if n_rows % BATCH_SIZE == 0
@@ -350,7 +372,7 @@ impl ColData<i64>
             header: header,
             data: result_vec,
             n_rows: n_rows,
-            result: ResType::IntColRes(average),
+            // result: ResType::IntColRes(average),
             file_handle: None, // maybe better to store f?
             first_time_saving: false
         })
@@ -381,15 +403,14 @@ impl ColData<i64>
         Ok(())
     }
 
-
-    pub fn result(&self) -> f64
-    {
-        match self.result
-        {
-            ResType::IntColRes(val) => val,
-            _ => panic!("ColData<i64> has not IntColRes as result type")
-        }
-    }
+    // pub fn result(&self) -> f64
+    // {
+    //     match self.result
+    //     {
+    //         ResType::IntColRes(val) => val,
+    //         _ => panic!("ColData<i64> has not IntColRes as result type")
+    //     }
+    // }
     // ########################################################################
     // ############################ PRIVATE API ###############################
     // ########################################################################
@@ -453,7 +474,6 @@ impl ColData<i64>
 impl ColData<String>
 {
     pub async fn read_from_file(
-        mut f: tokio_fs::File, 
         mut remaining_files: VecDeque<&str>
     ) -> Result<ColData<String>, DbError>
     {
@@ -461,9 +481,19 @@ impl ColData<String>
         let mut bytes_read;
         let mut buf_idx = 0;
 
+        let file_path = match remaining_files.pop_front()
+        {
+            Some(path) => path,
+            None => {
+                return Err(DbError::Other(format!("ColData<String>::read_from_file: provided queue of file_paths is empty")));
+            }
+        };
+        let mut f = tokio_fs::File::open(file_path).await?;
+
         bytes_read = f.read(&mut buf).await?;
 
         let mut header = ColHeader::create_header_from_buf(
+                                            String::col_type(),
                                             &mut buf_idx, 
                                             bytes_read, 
                                             &buf
@@ -471,11 +501,11 @@ impl ColData<String>
 
         // Below var checks how many bytes of DATA we read, not metadata
         // thus we substract buf_idx since it now stores metadata count
-        let mut size_data_bytes_read = bytes_read - buf_idx;
+        let mut data_bytes_read = bytes_read - buf_idx;
         let mut bytes: Vec<u8> = Vec::new();
 
         let result_vec: Vec<String> = Vec::new();
-        let mut ascii_count: usize = 0;
+        // let mut ascii_count: usize = 0;
         let mut n_rows: usize = 0;
 
         #[derive(PartialEq)]
@@ -497,7 +527,7 @@ impl ColData<String>
                 let is_break = ColData::<String>::_read_new_data(
                     &mut buf_idx, 
                     &mut bytes_read, 
-                    &mut size_data_bytes_read, 
+                    &mut data_bytes_read, 
                     &mut header, 
                     &mut remaining_files,
                     &mut buf, 
@@ -542,12 +572,12 @@ impl ColData<String>
 
                     // Each decoded string is a value for separate row
                     n_rows += decoded_strings.len();
-                    ascii_count += decoded_strings
-                                    .iter()
-                                    .fold(0, |mut acc, s| {
-                                        acc += s.len(); 
-                                        acc
-                                    });
+                    // ascii_count += decoded_strings
+                    //                 .iter()
+                    //                 .fold(0, |mut acc, s| {
+                    //                     acc += s.len(); 
+                    //                     acc
+                    //                 });
 
                     // After reading one full zstd frame, we again need to read
                     // frame size, so we switch stage
@@ -564,7 +594,7 @@ impl ColData<String>
             header: header,
             data: result_vec,
             n_rows: n_rows,
-            result: ResType::StrColRes(ascii_count),
+            // result: ResType::StrColRes(ascii_count),
             file_handle: None, // maybe better to store f?
             first_time_saving: false
         })
@@ -589,14 +619,14 @@ impl ColData<String>
         Ok(())
     }
 
-    pub fn result(&self) -> usize
-    {
-        match self.result
-        {
-            ResType::StrColRes(val) => val,
-            _ => panic!("ColData<String> has not StrColRes as result type")
-        }
-    }
+    // pub fn result(&self) -> usize
+    // {
+    //     match self.result
+    //     {
+    //         ResType::StrColRes(val) => val,
+    //         _ => panic!("ColData<String> has not StrColRes as result type")
+    //     }
+    // }
 
     fn _zstd_decode(bytes: &[u8]) -> Result<Vec<String>, DbError>
     {

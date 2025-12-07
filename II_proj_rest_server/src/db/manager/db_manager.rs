@@ -201,10 +201,10 @@ impl DbManager
         );
         let new_query_id = new_query.id().clone();
 
-        // Query is correct thus we schedule it for execution
-        self.query_store.schedule_for_execution(&new_query_id);
         // We need to remember all queries so we add it to query store
         self.query_store.insert_query(new_query)?;
+        // Query is correct thus we schedule it for execution
+        self.query_store.schedule_for_execution(&new_query_id);
 
         self.execute_next_query()?;
 
@@ -219,19 +219,24 @@ impl DbManager
         q_msg: QueryCompletionMsg
     ) -> Result<(), DbError>
     {
+        self.free_db_worker(worker_id)?;
+
         let db_meta = self.db_meta
                 .as_mut()
                 .ok_or_else(|| DbError::NotFound("DbManager::handle_completed_query: database was not initialized".to_string()
         ))?;
 
-        db_meta.decrease_nbr_of_queries_operating_on_table(&q_msg.table_id())?;
+        // If everything works as intended this should never return error
+        db_meta.decrease_nbr_of_queries_operating_on_table(
+            Some(&q_msg.table_id()), 
+            None
+        )?;
 
         self.query_store.update_query_status(
             &q_msg.query_id(), 
             QueryStatus::COMPLETED
         )?;
         self.store_completed_query(q_msg);
-        self.free_db_worker(worker_id)?;
         self.execute_next_query()?;
 
         Ok(())
@@ -243,12 +248,18 @@ impl DbManager
         q_msg: QueryFailureMsg
     ) -> Result<(), DbError>
     {
+        // We always want to free worker first
+        self.free_db_worker(worker_id)?;
+
         let db_meta = self.db_meta
                 .as_mut()
-                .ok_or_else(|| DbError::NotFound("DbManager::handle_completed_query: database was not initialized".to_string()
+                .ok_or_else(|| DbError::InternalDbError("DbManager::handle_completed_query: database was not initialized".to_string()
         ))?;
 
-        db_meta.decrease_nbr_of_queries_operating_on_table(&q_msg.table_id())?;
+        db_meta.decrease_nbr_of_queries_operating_on_table(
+            Some(&q_msg.table_id()),
+            None,
+        )?;
 
         self.query_store.update_query_status(
             &q_msg.query_id(), 
@@ -256,7 +267,6 @@ impl DbManager
         )?;
 
         self.store_failed_query(q_msg);
-        self.free_db_worker(worker_id)?;
         self.execute_next_query()?;
 
         Ok(())
@@ -270,7 +280,7 @@ impl DbManager
             {
                 let db_meta = self.db_meta
                         .as_mut()
-                        .ok_or_else(|| DbError::NotFound("DbManager::post_query: database was not initialized".to_string()
+                        .ok_or_else(|| DbError::InternalDbError("DbManager::post_query: database was not initialized".to_string()
                 ))?;
                 // DbMeta plans query execution by checking if table for query 
                 // exists, and if it does it gives query file paths and column info 
@@ -279,7 +289,15 @@ impl DbManager
                     Ok(val) => val,
                     Err(e) => {
                         pending_q.update_status(QueryStatus::FAILED);
-                        return Err(e);
+
+                        match db_meta.decrease_nbr_of_queries_operating_on_table(
+                            None, 
+                            Some(pending_q.table_name())
+                        )
+                        {
+                            Ok(_) => return Err(e),
+                            Err(second_err) => return Err(DbError::InternalDbError(format!("Error1: {}\nError2: {}", e, second_err)))
+                        }
                     }
                 };
     
@@ -292,7 +310,15 @@ impl DbManager
                     },
                     Err(e) => {
                         pending_q.update_status(QueryStatus::FAILED);
-                        return Err(e);
+
+                        match db_meta.decrease_nbr_of_queries_operating_on_table(
+                            None, 
+                            Some(pending_q.table_name())
+                        )
+                        {
+                            Ok(_) => return Err(e),
+                            Err(second_err) => return Err(DbError::InternalDbError(format!("Error1: {}\nError2: {}", e, second_err)))
+                        }
                     }
                 }
             }

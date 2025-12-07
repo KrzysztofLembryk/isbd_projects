@@ -12,6 +12,21 @@ impl MultipleProblemsError
     {
         MultipleProblemsError {problems}
     }
+
+    pub fn new_with_one_problem(
+        error_msg: &str, 
+        ctx: &str
+    ) -> MultipleProblemsError
+    {
+        MultipleProblemsError {
+            problems: vec![
+                Problem::new(
+                    &Error::new(error_msg),
+                    &ctx
+                )
+            ]
+        }
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
