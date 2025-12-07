@@ -1,4 +1,6 @@
-use crate::schemas::column::{DataColumn};
+use crate::db::db_engine::DbEngine;
+use crate::db::errors::DbError;
+use crate::schemas::column::{DataColumn, Int64Column, VarcharColumn};
 use uuid::Uuid;
 use serde;
 use serde::ser::Serialize;
@@ -203,13 +205,13 @@ impl QueryTableName for AllowedQuery {
 pub struct QueryResult
 {
     #[serde(rename="rowCount")]
-    row_count: i32,
+    row_count: usize,
     columns: Vec<DataColumn>,
 }
 
 impl QueryResult
 {
-    pub fn new(row_count: i32, columns: Vec<DataColumn>) -> QueryResult
+    pub fn new(row_count: usize, columns: Vec<DataColumn>) -> QueryResult
     {
         QueryResult { row_count, columns }
     }
@@ -217,5 +219,44 @@ impl QueryResult
     pub fn push_col_data(&mut self, col_data: DataColumn)
     {
         self.columns.push(col_data);
+    }
+
+    pub fn get_n_rows(&self, row_limit: usize) -> Result<QueryResult, DbError>
+    {
+        // If requested rows exceed available rows, return all rows
+        let actual_limit = std::cmp::min(row_limit as usize, self.row_count);
+        let mut new_res = QueryResult::new(actual_limit, vec![]);
+
+        for col_data in &self.columns
+        {
+            match col_data
+            {
+                DataColumn::Int64(col) => {
+                    let limited_vals: Vec<i64> = col
+                        .values()
+                        .iter()
+                        .take(actual_limit)
+                        .copied()
+                        .collect();
+
+                    new_res.push_col_data(DataColumn::Int64(
+                        Int64Column::new(limited_vals)
+                    ));
+                },
+                DataColumn::Varchar(col) =>{
+                    let limited_vals: Vec<String> = col
+                        .values()
+                        .iter()
+                        .take(actual_limit)
+                        .cloned()
+                        .collect();
+
+                    new_res.push_col_data(DataColumn::Varchar(
+                        VarcharColumn::new(limited_vals)
+                    ));
+                } 
+            }
+        }
+        return Ok(new_res);
     }
 }

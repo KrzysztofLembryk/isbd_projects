@@ -69,11 +69,11 @@ impl QueryStore
         let _ = self.queries_failed.insert(*q_id, e);
     }
 
-    pub fn get_query_result(&self, q_id: &Uuid) -> Result<QueryResult, DbError>
+    pub fn get_query_result(&self, q_id: &Uuid) -> Result<&QueryResult, DbError>
     {
         if let Some(res) = self.queries_results.get(q_id)
         {
-            return Ok(res.clone());
+            return Ok(res);
         }
         Err(DbError::NotFound(format!("There is no result for Query: '{}'", q_id)))
     }
@@ -88,6 +88,11 @@ impl QueryStore
             return Ok(res.clone());
         }
         Err(DbError::NotFound(format!("Query: '{}' hasn't FAILED", q_id)))
+    }
+
+    pub fn remove_query_res(&mut self, query_id: &Uuid)
+    {
+        let _ = self.queries_results.remove(query_id);
     }
 
     pub fn update_query_status(

@@ -143,14 +143,14 @@ async fn put_table(
             {
                 ResMsg::ResPutTable(Ok(id)) => 
                     HttpResponse::Ok()
-                        .body(id.to_string()),
+                        .json(id.to_string()),
                 ResMsg::ResPutTable(Err(e)) => 
                     HttpResponse::BadRequest()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
-                        .body("get_tables: got Wrong message from db"),
+                        .json("get_tables: got Wrong message from db"),
             }
         },
-        None => HttpResponse::InternalServerError().body("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
     };
 }

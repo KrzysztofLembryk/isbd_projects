@@ -54,7 +54,7 @@ impl MaintenanceWorker
                             delete_dir_with_contents(
                                 &create_dir_path(
                                     &db_data_dir_path, 
-                                    table_meta.table_id(), 
+                                    &table_meta.table_id(), 
                                     table_meta.table_name())
                             ).await.unwrap();
                         },

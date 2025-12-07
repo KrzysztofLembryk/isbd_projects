@@ -1,5 +1,7 @@
 use II_proj_rest_server::routes::tables::{get_tables, get_table_details, put_table, delete_table};
 use II_proj_rest_server::routes::queries::{get_queries, get_query_info, post_query};
+use II_proj_rest_server::routes::results::{get_query_result};
+use II_proj_rest_server::routes::errors::{get_failed_query};
 use II_proj_rest_server::db::constants::{DB_DATA_DIR, METADATA_FILE_PATH, MAX_DB_WORKERS};
 use actix_web::{App, HttpServer, web};
 use II_proj_rest_server::db::manager::messages::{DbClientMsg, DbCmd, ResMsg};
@@ -46,6 +48,8 @@ async fn main() -> std::io::Result<()>
             .service(get_queries)
             .service(get_query_info)
             .service(post_query)
+            .service(get_query_result)
+            .service(get_failed_query)
     })
     .bind(("127.0.0.1", 8080))?
     .run()

@@ -1,6 +1,6 @@
 use serde;
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct MultipleProblemsError
 {
     problems: Vec<Problem>
@@ -29,7 +29,7 @@ impl MultipleProblemsError
     }
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct Problem
 {
     error: Error,
@@ -45,7 +45,7 @@ impl Problem
     }
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct Error
 {
     message: String

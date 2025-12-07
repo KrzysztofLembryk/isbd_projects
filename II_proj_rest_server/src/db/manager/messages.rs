@@ -10,8 +10,11 @@ use tokio::sync::mpsc::{UnboundedSender};
 
 /// Conn means Connection
 type ConnId = Uuid;
+type QueryId = Uuid;
+type TableId = Uuid;
 type WorkerId = usize;
-type QueryId = usize;
+type RowCount = usize;
+type FlushResult = bool;
 
 pub enum DbCmd
 {
@@ -33,12 +36,14 @@ pub enum DbClientMsg
 {
     Register(ConnId, UnboundedSender<ResMsg>),
     GetTables(ConnId),
-    GetTableDetails(ConnId, Uuid),
-    DeleteTable(ConnId, Uuid),
+    GetTableDetails(ConnId, TableId),
+    DeleteTable(ConnId, TableId),
     PutTable(ConnId, TableSchema),
     GetQueries(ConnId),
-    GetQueryDetails(ConnId, Uuid),
+    GetQueryDetails(ConnId, QueryId),
     PostQuery(ConnId, AllowedQuery),
+    GetQueryRes(ConnId, (QueryId, RowCount, FlushResult)),
+    GetFailedQuery(ConnId, QueryId),
 }
 
 pub enum ResMsg
@@ -50,6 +55,8 @@ pub enum ResMsg
     ResQueries(Result<Vec<ShallowQuery>, DbError>),
     ResQueryDetails(Result<Query, DbError>),
     ResPostQuery(Result<Uuid, DbError>),
+    ResQuery(Result<QueryResult, DbError>),
+    ResFailedQuery(Result<MultipleProblemsError, DbError>),
 }
 
 pub enum DbMaintenanceMsg
@@ -59,6 +66,7 @@ pub enum DbMaintenanceMsg
     Shutdown
 }
 
+#[derive(Debug)]
 pub struct QueryFailureMsg
 {
     query_id: Uuid,

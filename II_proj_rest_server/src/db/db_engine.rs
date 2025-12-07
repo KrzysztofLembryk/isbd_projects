@@ -147,9 +147,12 @@ fn handle_worker_cmd(
                 _ => {}
             }
         },
+        DbWorkerMsg::InternalError(worker_id, error_msg) => {
+            error!("DbTask::handle_worker_cmd: from worker: '{}' got INTERNAL ERROR: {:?}", worker_id, error_msg);
+            return BreakMsg::DoBreak;
+        },
         _ => {
-            // TODO: probably wwe should shutdown db here
-            error!("DbTask::handleWorker_cmd DbManager got unsupported msg from DbWorker, DB is in CORRUPTED STATE");
+            error!("DbTask::handleWorker_cmd DbManager got unsupported msg from DbWorker, DB is in CORRUPTED STATE, initiating shutdown");
             return  BreakMsg::DoBreak;
         }    
     }
@@ -166,7 +169,7 @@ fn handle_client_cmd(
     {
         DbClientMsg::Register(id, tx) => {
             db_manager.register(&id, tx);
-        }
+        },
         DbClientMsg::GetTables(conn_id) => {
             debug!("DbTask::GetTables conn_id: {}", conn_id);
             let res = db_manager.get_tables();
@@ -176,7 +179,7 @@ fn handle_client_cmd(
                 &conn_id, 
                 db_manager
             );
-        }
+        },
         DbClientMsg::GetTableDetails(conn_id, table_id) => {
             debug!("DbTask::GetTableDetails conn_id: {}, table_id: {}", conn_id, table_id);
             let res = db_manager.get_table_details(&table_id);
@@ -254,7 +257,31 @@ fn handle_client_cmd(
                 &conn_id, 
                 db_manager
             );
-        }
+        },
+        DbClientMsg::GetQueryRes(conn_id, (query_id, row_count, do_flush)) => {
+            let res = db_manager.get_query_result(
+                &query_id, 
+                row_count, 
+                do_flush
+            ); 
+
+            send_result_to_client(
+                ResMsg::ResQuery(res),
+                &conn_id, 
+                db_manager
+            );
+        },
+        DbClientMsg::GetFailedQuery(conn_id, query_id) => {
+            let res = db_manager.get_query_failed(
+                &query_id, 
+            ); 
+
+            send_result_to_client(
+                ResMsg::ResFailedQuery(res),
+                &conn_id, 
+                db_manager
+            );
+        },
     }
 
     return BreakMsg::NoMsg;

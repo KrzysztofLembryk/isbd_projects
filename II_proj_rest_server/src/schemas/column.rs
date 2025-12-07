@@ -69,6 +69,11 @@ impl Int64Column
     {
         Int64Column { values }
     }
+
+    pub fn values(&self) -> &Vec<i64>
+    {
+        &self.values
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -82,5 +87,10 @@ impl VarcharColumn
     pub fn new(values: Vec<String>) -> VarcharColumn
     {
         VarcharColumn { values }
+    }
+
+    pub fn values(&self) -> &Vec<String>
+    {
+        &self.values
     }
 }

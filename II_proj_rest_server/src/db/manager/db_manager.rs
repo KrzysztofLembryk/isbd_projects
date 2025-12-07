@@ -1,6 +1,7 @@
 use crate::db::storage::metadata::{DbMetadata, TableMetadata};
 use crate::db::constants::{MAX_DB_WORKERS};
-use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryStatus, SelectQuery, ShallowQuery};
+use crate::schemas::error::MultipleProblemsError;
+use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryResult, QueryStatus, SelectQuery, ShallowQuery};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::errors::DbError;
 use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, QueryCompletionMsg, QueryFailureMsg, ResMsg};
@@ -211,6 +212,32 @@ impl DbManager
         // If no worker is available we just return query id, post was 
         // successful, and query is scheduled for execution
         return Ok(new_query_id);
+    }
+
+    pub fn get_query_result(
+        &mut self, 
+        query_id: &Uuid, 
+        row_limit: usize, 
+        do_flush: bool
+    ) -> Result<QueryResult, DbError>
+    {
+        let q_res = self.query_store.get_query_result(query_id)?;
+        let limited_query_res = q_res.get_n_rows(row_limit)?;
+
+        if do_flush
+        {
+            self.query_store.remove_query_res(query_id);
+        }
+
+        return Ok(limited_query_res);
+    }
+
+    pub fn get_query_failed(
+        &mut self, 
+        query_id: &Uuid, 
+    ) -> Result<MultipleProblemsError, DbError>
+    {
+        self.query_store.get_query_failure(query_id)
     }
 
     pub fn handle_completed_query(
