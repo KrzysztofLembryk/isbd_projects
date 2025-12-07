@@ -1,10 +1,11 @@
 use serde;
 
 #[derive(serde::Serialize)]
-struct SystemInformation
+pub struct SystemInformation
 {
     #[serde(rename = "interfaceVersion")]
-    interface_version: Option<String>,
-    version: String,
-    author: Option<String>,
+    pub interface_version: String,
+    pub version: String,
+    pub author: String,
+    pub uptime: i64
 }
