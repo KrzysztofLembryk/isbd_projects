@@ -242,4 +242,9 @@ impl CopyQData
     {
         &self.table_metadata
     }
+
+    pub fn query_data(&self) -> &CopyQuery
+    {
+        &self.copy_q
+    }
 }

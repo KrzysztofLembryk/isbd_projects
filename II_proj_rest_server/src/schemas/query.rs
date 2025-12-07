@@ -150,8 +150,31 @@ pub struct CopyQuery
     dest_table_name: String,
     #[serde(rename="destinationColumns")]
     dest_columns: Option<Vec<String>>,
-    #[serde(rename="doesCsvContainHeader")]
+    #[serde(rename="doesCsvContainHeader", default)] // default is false
     does_csv_contain_header: bool,
+}
+
+impl CopyQuery
+{
+    pub fn src_filepath(&self) -> &str
+    {
+        &self.src_filepath
+    }
+
+    pub fn dest_table_name(&self) -> &str
+    {
+        &self.dest_table_name
+    }
+
+    pub fn dest_columns(&self) -> &Option<Vec<String>>
+    {
+        &self.dest_columns
+    }
+
+    pub fn csv_contains_header(&self) -> bool
+    {
+        self.does_csv_contain_header
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]

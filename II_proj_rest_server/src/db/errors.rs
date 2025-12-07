@@ -17,6 +17,7 @@ pub enum DbError {
     UnsupportedType(String),
     NotFound(String),
     InternalDbError(String),
+    CsvError(String),
     Other(String),
 }
 
@@ -40,6 +41,7 @@ impl fmt::Display for DbError {
             DbError::UnsupportedType(msg) => write!(f, "Unsupported type: {}", msg),
             DbError::NotFound(msg) => write!(f, "Not found: {}", msg),
             DbError::InternalDbError(msg) => write!(f, "Internal Db error: {}", msg),
+            DbError::CsvError(msg) => write!(f, "CSV error: {}", msg),
             DbError::Other(msg) => write!(f, "Error: {}", msg),
         }
     }
@@ -54,10 +56,22 @@ impl std::error::Error for DbError {
     }
 }
 
-//  for automatic conversion using ?
+// for automatic IO:error conversion using ?
 impl From<io_err> for DbError {
     fn from(error: io_err) -> Self {
         DbError::IoError(error)
+    }
+}
+
+// for automatic csv_async:error conversion using ?
+impl From<csv_async::Error> for DbError {
+    fn from(error: csv_async::Error) -> Self {
+        match error.kind() {
+            csv_async::ErrorKind::Io(io_err) => {
+                DbError::IoError(std::io::Error::new(io_err.kind(), io_err.to_string()))
+            },
+            _ => DbError::CsvError(error.to_string())
+        }
     }
 }
 

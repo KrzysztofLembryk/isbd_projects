@@ -283,6 +283,5 @@ fn handle_client_cmd(
             );
         },
     }
-
     return BreakMsg::NoMsg;
 }

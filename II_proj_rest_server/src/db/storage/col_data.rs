@@ -9,23 +9,6 @@ use crate::db::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle
 use crate::db::storage::col_header::ColHeader;
 use crate::db::errors::DbError;
 
-enum ResType
-{
-    StrColRes(usize),
-    IntColRes(f64)
-}
-
-impl ResType
-{
-    pub fn get_res_type<T: ColType>() -> ResType
-    {
-        match T::col_type()
-        {
-            LogicalColType::INT64 => ResType::IntColRes(0.0),
-            LogicalColType::VARCHAR => ResType::StrColRes(0)
-        }
-    }
-}
 
 pub trait ColType 
 {
@@ -72,13 +55,23 @@ impl<T: ColType> ColData<T>
             n_rows: 0,
             // result: ResType::get_res_type::<T>(),
             file_handle: None,
-            first_time_saving: true
+            first_time_saving: true,
         })
     }
 
     pub fn n_rows(&self) -> usize
     {
         self.n_rows
+    }
+
+    pub fn col_file_id(&self) -> u16
+    {
+        self.header.col_id()
+    }
+
+    pub fn col_name(&self) -> &str
+    {
+        self.header.col_name()
     }
 
     /// Function **consumes SELF**
@@ -94,7 +87,8 @@ impl<T: ColType> ColData<T>
         header: &mut ColHeader,
         remaining_files: &mut VecDeque<&str>,
         buf: &mut [u8; BUF_SIZE],    
-        f: &mut tokio_fs::File
+        f: &mut tokio_fs::File,
+        dir_path: &str
     ) -> Result<bool, DbError>
     {
         *buf_idx = 0;
@@ -123,7 +117,8 @@ impl<T: ColType> ColData<T>
                     T::col_type(),
                     buf_idx, 
                     *bytes_read, 
-                    buf
+                    buf,
+                    dir_path
                 )?;
                 // We need to substract buf_idx since first bytes we read from
                 // file are headers bytes, thus nbr of data bytes we read
@@ -280,7 +275,8 @@ impl ColData<i64>
     // ############################# PUBLIC API ###############################
     // ########################################################################
     pub async fn read_from_file(
-        mut remaining_files: VecDeque<&str>
+        mut remaining_files: VecDeque<&str>,
+        dir_path: &str
     ) -> Result<ColData<i64>, DbError>
     {
         let mut buf = [0 as u8; BUF_SIZE];
@@ -305,7 +301,8 @@ impl ColData<i64>
             i64::col_type(),
             &mut buf_idx, 
             bytes_read, 
-            &buf
+            &buf,
+            dir_path
         )?;
 
         // Below var checks how many bytes of DATA we read, not metadata
@@ -330,7 +327,8 @@ impl ColData<i64>
                     &mut header, 
                     &mut remaining_files,
                     &mut buf, 
-                    &mut f
+                    &mut f,
+                    dir_path
                 ).await?;
 
                 if is_break {break;}
@@ -374,7 +372,7 @@ impl ColData<i64>
             n_rows: n_rows,
             // result: ResType::IntColRes(average),
             file_handle: None, // maybe better to store f?
-            first_time_saving: false
+            first_time_saving: false,
         })
     }
 
@@ -474,7 +472,8 @@ impl ColData<i64>
 impl ColData<String>
 {
     pub async fn read_from_file(
-        mut remaining_files: VecDeque<&str>
+        mut remaining_files: VecDeque<&str>,
+        dir_path: &str,
     ) -> Result<ColData<String>, DbError>
     {
         let mut buf = [0 as u8; BUF_SIZE];
@@ -496,7 +495,8 @@ impl ColData<String>
                                             String::col_type(),
                                             &mut buf_idx, 
                                             bytes_read, 
-                                            &buf
+                                            &buf,
+                                            dir_path
                                         )?;
 
         // Below var checks how many bytes of DATA we read, not metadata
@@ -531,7 +531,8 @@ impl ColData<String>
                     &mut header, 
                     &mut remaining_files,
                     &mut buf, 
-                    &mut f
+                    &mut f,
+                    dir_path
                 ).await?;
 
                 if is_break {break;}
@@ -596,7 +597,7 @@ impl ColData<String>
             n_rows: n_rows,
             // result: ResType::StrColRes(ascii_count),
             file_handle: None, // maybe better to store f?
-            first_time_saving: false
+            first_time_saving: false,
         })
     }
 

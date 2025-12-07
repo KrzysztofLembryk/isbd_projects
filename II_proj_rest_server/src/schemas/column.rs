@@ -74,6 +74,11 @@ impl Int64Column
     {
         &self.values
     }
+
+    pub fn push(&mut self, val: i64)
+    {
+        self.values.push(val);
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -92,5 +97,10 @@ impl VarcharColumn
     pub fn values(&self) -> &Vec<String>
     {
         &self.values
+    }
+
+    pub fn push(&mut self, val: &str)
+    {
+        self.values.push(String::from(val));
     }
 }

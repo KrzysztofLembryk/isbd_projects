@@ -15,12 +15,14 @@ const COL_HEADER_DATA_SIZE_OFFSET: u64 = 8;
 pub struct ColHeader
 {
     magic_word: u32,    // magic word saying that this is our db file
-    col_id: u16,        // equal to file number - we may have many files for 
+    col_file_id: u16,   // equal to file number - we may have many files for 
                         // one column
     col_type: LogicalColType,
     is_overflow: bool,  // OBSOLETE
     size_of_data: u32,  // size of data without metadata
-    col_name: String    // max 255 characters
+    col_name: String,   // max 255 characters
+    // probably dir_path should be an Option
+    dir_path: String    // column files for given table are stored in this dir
 }
 
 impl ColHeader
@@ -30,30 +32,34 @@ impl ColHeader
         col_type: LogicalColType,
         is_overflow: bool,
         size_of_data: u32,
-        col_name: String
+        col_name: String,
+        dir_path: &str
     ) -> Result<ColHeader, DbError>
     {
         check_col_name_correctness(&col_name)?;
 
         Ok(ColHeader { 
             magic_word: MAGIC_WORD, 
-            col_id, 
+            col_file_id: col_id, 
             col_type, 
             is_overflow, 
             size_of_data, 
-            col_name })
+            col_name,
+            dir_path: String::from(dir_path),
+        })
     }
 
     pub fn new_empty(
         col_type: LogicalColType, 
-        col_name: String
+        col_name: String,
+        dir_path: &str
     ) -> Result<ColHeader, DbError>
     {
         let col_id = 0;
         let is_overflow = false;
         let size_of_data = 0;
 
-        ColHeader::new(col_id, col_type, is_overflow, size_of_data, col_name)
+        ColHeader::new(col_id, col_type, is_overflow, size_of_data, col_name, dir_path)
     }
 
     /// Function creates next header in sequence. <br>
@@ -65,11 +71,13 @@ impl ColHeader
         let size_of_data = 0;
 
         ColHeader::new(
-            self.col_id + 1, 
+            self.col_file_id + 1, 
             self.col_type, 
             is_overflow, 
             size_of_data, 
-            self.col_name.clone())
+            self.col_name.clone(),
+            &self.dir_path
+        )
     }
 
     /// - Function returns file_name of created file and its File Handler
@@ -94,18 +102,18 @@ impl ColHeader
 
         if last_path_char == b'/'
         {
-            file_name = format!("{}{}_{}", dir_path, self.col_name, self.col_id);
+            file_name = format!("{}{}_{}", dir_path, self.col_name, self.col_file_id);
         }
         else 
         {
-            file_name = format!("{}/{}_{}", dir_path, self.col_name, self.col_id);
+            file_name = format!("{}/{}_{}", dir_path, self.col_name, self.col_file_id);
         }
 
         let mut f = tokio_fs::File::create(&file_name).await?;
 
         let null_terminator = [b'\0'];
         let header_size = mem::size_of_val(&self.magic_word)
-            + mem::size_of_val(&self.col_id)
+            + mem::size_of_val(&self.col_file_id)
             + mem::size_of_val(&self.col_type.to_u8())
             + mem::size_of_val(&self.is_overflow)
             + mem::size_of_val(&self.size_of_data)
@@ -132,7 +140,7 @@ impl ColHeader
         
         // TODO: do it in one write
         f.write(&self.magic_word.to_be_bytes()).await?;
-        f.write(&self.col_id.to_be_bytes()).await?;
+        f.write(&self.col_file_id.to_be_bytes()).await?;
         f.write(&LogicalColType::to_u8(&self.col_type).to_be_bytes()).await?;
 
         let is_overflow: u8 = self.is_overflow
@@ -159,6 +167,7 @@ impl ColHeader
         curr_buf_idx: &mut usize,
         bytes_read: usize,
         buf: &[u8],
+        dir_path: &str
     ) -> Result<ColHeader, DbError>
     {
         // We will treat all errors as internal db errors since we assume that
@@ -246,14 +255,16 @@ impl ColHeader
             StrLenCheckType::ColNameLenCheck)?;
         check_col_name_correctness(&res_str)?;
 
-        Ok(ColHeader { 
-            magic_word, 
+        let header = ColHeader::new(
             col_id, 
             col_type, 
             is_overflow, 
             size_of_data, 
-            col_name: res_str 
-        })
+            res_str,
+            dir_path
+        )?;
+
+        return Ok(header);
     }
 
     pub fn increase_data_size(
@@ -319,7 +330,7 @@ impl ColHeader
 
     // GETTERS
     pub fn col_id(&self) -> u16 {
-        self.col_id
+        self.col_file_id
     }
 
     pub fn col_type(&self) -> LogicalColType {
@@ -338,16 +349,21 @@ impl ColHeader
         &self.col_name
     }
 
+    pub fn dir_path(&self) -> &str
+    {
+        &self.dir_path
+    }
+
     pub fn get_file_path(&self) -> String
     {
-        format!("{}/{}_{}", DB_DATA_DIR, self.col_name ,self.col_id)
+        format!("{}/{}_{}", self.dir_path, self.col_name ,self.col_file_id)
     }
 
     pub fn get_next_file_path(&self) -> Result<String, DbError>
     {
         if self.is_overflow
         {
-            return Ok(format!("{}/{}_{}", DB_DATA_DIR, self.col_name ,self.col_id + 1));
+            return Ok(format!("{}/{}_{}", self.dir_path, self.col_name ,self.col_file_id + 1));
         }
 
         Err(DbError::Other("There is no next file path since there is no overflow in current file".to_string()))
@@ -358,7 +374,7 @@ impl fmt::Display for ColHeader {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "ColHeader:")?;
         writeln!(f, "  magic_word: 0x{:X}", self.magic_word)?;
-        writeln!(f, "  col_id: {}", self.col_id)?;
+        writeln!(f, "  col_id: {}", self.col_file_id)?;
         writeln!(f, "  col_type: {:?}", self.col_type)?;
         writeln!(f, "  is_overflow: {}", self.is_overflow)?;
         writeln!(f, "  size_of_data: {}", self.size_of_data)?;

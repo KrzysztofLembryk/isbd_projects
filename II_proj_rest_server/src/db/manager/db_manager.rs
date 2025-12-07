@@ -406,19 +406,19 @@ impl DbManager
 
     pub fn send_result(
         &self, 
-        id: &Uuid, 
+        conn_id: &Uuid, 
         msg: ResMsg
     ) -> Result<(), DbError>
     {
-        if let Some(tx) = self.tx_server_channels.get(id)
+        if let Some(tx) = self.tx_server_channels.get(conn_id)
         {
             match tx.send(msg)
             {
                 Ok(_) => return Ok(()),
-                Err(e) => return Err(DbError::Other(format!("DbManager::send_result: error '{}'", e)))
+                Err(e) => return Err(DbError::InternalDbError(format!("DbManager::send_result: error '{}'", e)))
             };
         }
-        Err(DbError::NotFound(format!("channel with id: {} ", id)))
+        Err(DbError::NotFound(format!("channel with id: {} ", conn_id)))
     }
 
     // ########################################################################
@@ -428,7 +428,6 @@ impl DbManager
     {
         self.save_metadata()?;
         self.perform_shutdown().await?;
-
         Ok(())
     }
 

@@ -12,8 +12,9 @@ use crate::db::errors::{DbError};
 use crate::db::constants::{MAX_COL_NAME_LEN, MAX_COL_COUNT, LogicalColType, FILE_PATH_REGEX, MAX_ALLOWED_METADATA_CHANGES};
 use crate::db::manager::messages::{CopyQData, QueryData, SelectQData};
 use crate::db::storage::col_data::ColData;
+use crate::db::storage::col_header::ColHeader;
 use crate::schemas::table::{TableSchema, ShallowTable};
-use crate::schemas::query::{AllowedQuery, Query, QueryResult, QueryStatus, QueryTableName};
+use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryResult, QueryStatus, QueryTableName};
 use crate::schemas::column::{Column, DataColumn, Int64Column, VarcharColumn};
 
 #[cfg(test)]
@@ -269,7 +270,16 @@ impl DbMetadata
         // to our metadata object
         self.tables_metadata.insert(
             table_id.clone(), 
-            TableMetadata::new(table_schema.name(), &table_id, columns) 
+            TableMetadata::new(
+                table_schema.name(), 
+                &table_id, 
+                columns,
+                &create_dir_path(
+                    &self.db_data_dir_path, 
+                    &table_id, 
+                    table_schema.name()
+                )
+            ) 
         );
         self.tables_states.insert(table_id, TableState::new());
         self.table_name_to_id_map.insert(
@@ -602,7 +612,14 @@ pub struct TableMetadata
     table_name: TableName,
     table_id: Uuid,
     columns: Vec<ColMetadata>,
-    // row_count: u32 // TODO: Table should remember how many rows it has
+    // row_count: u32, 
+    table_dir_path: String,
+}
+
+pub enum ColDataWrapper
+{
+    IntColData(ColData<i64>),
+    StrColData(ColData<String>),
 }
 
 impl TableMetadata
@@ -610,13 +627,15 @@ impl TableMetadata
     fn new(
         name: &str, 
         id: &Uuid, 
-        columns: Vec<ColMetadata>
+        columns: Vec<ColMetadata>,
+        dir_path: &str
     ) -> TableMetadata
     {
         TableMetadata {
         table_name: String::from(name),
         table_id: id.clone(),
-        columns: columns
+        columns: columns,
+        table_dir_path: String::from(dir_path)
         }
     }
 
@@ -637,9 +656,62 @@ impl TableMetadata
         &self.table_name
     }
 
+    pub fn columns(&self) -> &Vec<ColMetadata>
+    {
+        &self.columns
+    }
+
     pub fn table_id(&self) -> Uuid
     {
         self.table_id
+    }
+
+    pub fn get_column_name_to_index_map(&self) -> HashMap<String, usize>
+    {
+        self.columns
+            .iter()
+            .enumerate()
+            .map(|(idx, col_meta)| (col_meta.c_name.clone(), idx))
+            .collect()
+    }
+
+    // TODO: better name for this function
+    pub fn create_col_data_vec(&self) -> Result<Vec<ColDataWrapper>, DbError>
+    {
+        let mut res_vec: Vec<ColDataWrapper> = vec![];
+
+        for col_meta in &self.columns
+        {
+            // Column files ids start from 0, thus new column will have id equal
+            // to the len of file vector
+            let col_file_id = col_meta.c_files.len() as u16;
+            let is_overflow = false;
+            let initial_size_of_data = 0;
+            let col_type = col_meta.c_type();
+
+            let header = ColHeader::new(
+                col_file_id, 
+                col_type, 
+                is_overflow, 
+                initial_size_of_data, 
+                String::from(col_meta.c_name()),
+                &self.table_dir_path
+            )?;
+
+            let col_data = match col_type
+            {
+                LogicalColType::INT64 => {
+                    let x = ColData::<i64>::new(header)?;
+                    ColDataWrapper::IntColData(x)
+                },
+                LogicalColType::VARCHAR => {
+                    let x = ColData::<String>::new(header)?;
+                    ColDataWrapper::StrColData(x)
+                }
+            };
+            res_vec.push(col_data);
+        }
+        return Ok(res_vec);
     }
 
     pub async fn read_table(&self) -> Result<(QueryResult, i32), DbError>
@@ -661,7 +733,7 @@ impl TableMetadata
                 LogicalColType::INT64 => {
 
                     let col_data = ColData::<i64>
-                        ::read_from_file(file_queue)
+                        ::read_from_file(file_queue, &self.table_dir_path)
                         .await?;
 
                     TableMetadata::check_row_count(
@@ -679,7 +751,7 @@ impl TableMetadata
                 },
                 LogicalColType::VARCHAR => {
 
-                    let col_data = ColData::<String>::read_from_file(file_queue).await?;
+                    let col_data = ColData::<String>::read_from_file(file_queue, &self.table_dir_path).await?;
 
                     TableMetadata::check_row_count(
                         &mut row_count, 
@@ -741,7 +813,7 @@ impl TableMetadata
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-struct ColMetadata
+pub struct ColMetadata
 {
     c_name: ColumnName,
     c_type: LogicalColType,
@@ -757,6 +829,16 @@ impl ColMetadata
             c_type, 
             c_files: Vec::new()
         }
+    }
+
+    pub fn c_name(&self) -> &str
+    {
+        &self.c_name
+    }
+
+    pub fn c_type(&self) -> LogicalColType
+    {
+        self.c_type
     }
 }
 
@@ -843,7 +925,8 @@ fn create_file_path(
     idx: usize
 ) -> String
 {
-    format!("{db_data_dir_path}/{table_id}_{table_name}/{col_name}_{idx}")
+    let dir_path = create_dir_path(db_data_dir_path, table_id, table_name);
+    format!("{dir_path}/{col_name}_{idx}")
 }
 
 /// Creates dir path: {db_data_dir}/{table_id}\_{table_name}

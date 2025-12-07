@@ -1,8 +1,13 @@
+use std::collections::{HashMap, HashSet};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, SeekFrom, AsyncSeekExt};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+use crate::db::constants::BATCH_SIZE;
 use crate::db::errors::DbError;
-use crate::db::manager::messages::{BaseQueryDataInfo, DbCmd, DbWorkerMsg, QueryCompletionMsg, QueryData, QueryFailureMsg, SelectQData}; 
-use crate::db::storage::metadata::{TableMetadata};
-use crate::schemas::query::QueryResult;
+use crate::db::manager::messages::{BaseQueryDataInfo, CopyQData, DbCmd, DbWorkerMsg, QueryCompletionMsg, QueryData, QueryFailureMsg, SelectQData}; 
+use crate::db::storage::metadata::{ColDataWrapper, TableMetadata};
+use crate::schemas::column::{DataColumn, Int64Column, VarcharColumn};
+use crate::schemas::query::{CopyQuery, QueryResult, QueryTableName};
 use crate::schemas::error::{Error, MultipleProblemsError, Problem};
 
 use log::{info, warn, debug, error};
@@ -77,24 +82,449 @@ impl QueryWorker
             QueryData::CopyQ(c_q) => {
                 println!("Worker '{}' got COPY QUERY: {:?}", worker_id, c_q);
 
-                let table_meta = c_q.table_metadata();
-                let failure_msg = QueryFailureMsg::new(
-                    c_q.query_id(), 
-                    table_meta.table_id(), 
-                    MultipleProblemsError::new(
-                        vec![Problem::new(
-                            &Error::new("Copy QUery failed - not impl"), 
-                            "TEST CONTEXT")
-                        ]
-                    )
-                );
-
-                self.send_msg_to_db(DbWorkerMsg::QueryFailed(
-                    worker_id, 
-                    failure_msg
-                ));
+                let res_msg = QueryWorker::handle_copy(worker_id, c_q).await;
+                
+                // self.send_msg_to_db(DbWorkerMsg::QueryFailed(
+                //     worker_id, 
+                //     failure_msg
+                // ));
             },
         }
+    }
+
+
+
+    async fn handle_copy(
+        worker_id: usize,
+        c_q: CopyQData
+    ) -> Result<(), DbError>
+    {
+        QueryWorker::validate_copy_query(
+            c_q.query_data(), 
+            c_q.table_metadata()
+        )?;
+
+        let table_meta = c_q.table_metadata();
+        let col_name_to_idx_map = table_meta.get_column_name_to_index_map();
+        let query_data = c_q.query_data();
+        let src_file_path = query_data.src_filepath();
+        let f_csv = QueryWorker::open_csv_file(
+            src_file_path, 
+            table_meta.table_name()
+        ).await?;
+
+        // At this point we know that in copy query dest_columns if exist are 
+        // ok and the same as in table, csv file can be opened and table name 
+        // in copy query is correct.
+        // So now we need to check if in real csv everything is correct
+        let mut csv_rdr = QueryWorker::create_csv_reader(query_data, f_csv);
+            
+        QueryWorker::validate_csv_header(
+            query_data,
+            table_meta,
+            &col_name_to_idx_map,
+            &mut csv_rdr
+        ).await?;
+
+        QueryWorker::load_csv_data(query_data, table_meta, &mut csv_rdr).await?;
+
+        // TODO: add flag that given table has copy operation, and if it still
+        // has this operation, we will move another copy to the end of queue
+
+        todo!("Implement")
+    }
+
+    async fn load_csv_data(
+        query_data: &CopyQuery, 
+        table_meta: &TableMetadata,
+        csv_rdr: &mut csv_async::AsyncReader<tokio::fs::File>
+    ) -> Result<Vec<(String, u16)>, DbError>
+    {
+        // col_data_vec needed for saving BATCH chunks of data to our file 
+        // format
+        let dest_cols = query_data.dest_columns();
+        let mut col_data_vec = table_meta.create_col_data_vec()?;
+        let mut batches: Vec<DataColumn> = 
+            QueryWorker::init_batches_for_columns(&col_data_vec); 
+        let mut record = csv_async::StringRecord::new();
+        let mut row_idx = if query_data.csv_contains_header() { 1 } else { 0 };
+        let mut row_count: usize = 0;
+
+        while csv_rdr.read_record(&mut record).await?
+        {
+            row_idx += 1;
+            row_count += 1;
+            let vals_vec: Vec<&str> = record.iter().collect();
+
+            match dest_cols
+            {
+                None => {
+                    if vals_vec.len() != batches.len()
+                    {
+                        return Err(
+                            DbError::CsvError(
+                                format!(
+                                    "We read a row from csv (no dest_cols set) that has different nbr of columns ({}) than our table schema ({})", vals_vec.len(), batches.len()
+                                )
+                            )
+                        )
+                    }
+                    QueryWorker::push_values_to_batches(
+                        &vals_vec,
+                        &mut batches,
+                        row_idx,
+                        table_meta.table_name()
+                    )?;
+                },
+                Some(_dest_cols) => {
+                    panic!("dest cols case not impl")
+                }
+            }
+
+            if row_count >= BATCH_SIZE
+            {
+                row_count = 0;
+
+                QueryWorker::save_batches_to_files(
+                    &batches, 
+                    &mut col_data_vec
+                ).await?;
+            }
+        }
+        
+        // We will need this to update file paths in columns in metadata
+        let after_save_col_ids: Vec<(String, u16)> = col_data_vec
+            .iter()
+            .map(|col_data| {
+                match col_data {
+                    ColDataWrapper::IntColData(int_col) => {
+                        let col_name = int_col.col_name().to_string();
+                        let file_id = int_col.col_file_id();
+                        (col_name, file_id)
+                    },
+                    ColDataWrapper::StrColData(str_col) => {
+                        let col_name = str_col.col_name().to_string();
+                        let file_id = str_col.col_file_id();
+                        (col_name, file_id)
+                    }
+                }
+            })
+            .collect();
+
+        return Ok(after_save_col_ids);
+    }
+
+    async fn save_batches_to_files(
+        batches: &Vec<DataColumn>,
+        col_data_vec: &mut Vec<ColDataWrapper>
+    ) -> Result<(), DbError>
+    {
+        for (batch_idx, batch) in batches.iter().enumerate()
+        {
+            match batch
+            {
+                DataColumn::Int64(i_batch) => {
+                    let col_data = match col_data_vec
+                                            .get_mut(batch_idx)
+                                            .unwrap() {
+                        ColDataWrapper::IntColData(i_col_data) => {
+                            i_col_data
+                        },
+                        _ => {
+                            return Err(
+                                DbError::InternalDbError(
+                                    format!(
+                                        "QueryWorker::handle_copy: while saving batch, col_data_vec at idx: '{}' should be i64 but isnt", batch_idx
+                                    )
+                                )
+                            );
+                        }
+                    };
+
+                    col_data.save_to_file(i_batch.values()).await?;
+                },
+                DataColumn::Varchar(s_batch) => {
+                    let col_data = match col_data_vec
+                                            .get_mut(batch_idx)
+                                            .unwrap() {
+                        ColDataWrapper::StrColData(s_col_data) => {
+                            s_col_data
+                        },
+                        _ => {
+                            return Err(
+                                DbError::InternalDbError(
+                                    format!(
+                                        "QueryWorker::handle_copy: saving batch - col_data_vec at idx: '{}' should be Varchar but isnt", batch_idx
+                                    )
+                                )
+                            );
+                        }
+                    };
+
+                    col_data.save_to_file(s_batch.values()).await?;
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    fn push_values_to_batches(
+        vals_vec: &Vec<&str>,
+        batches: &mut Vec<DataColumn>,
+        row_idx: usize,
+        table_name: &str
+    ) -> Result<(), DbError>
+    {
+        for (idx, val) in vals_vec.iter().enumerate()
+        {
+            let batch = batches.get_mut(idx).unwrap();
+            match batch
+            {
+                DataColumn::Int64(i_vec) => {
+                    let parsed_val: i64 = match val.parse() {
+                        Ok(parsed) => parsed,
+                        Err(e) => {
+                            return Err(
+                                DbError::CsvError(
+                                    format!(
+                                        "At row: '{}', failed to parse value: '{}' into i64,
+                                        for table: '{}', column: '{}'. #ERROR#: {}", row_idx, val, table_name, idx, e
+                                    )
+                                )
+                            );
+                        }
+                    };
+                    i_vec.push(parsed_val);
+                },
+                DataColumn::Varchar(s_vec) => {
+                    // val is alread a string
+                    s_vec.push(val);
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    fn init_batches_for_columns(
+        col_data_vec: &Vec<ColDataWrapper>
+    ) -> Vec<DataColumn>
+    {
+        let mut batches: Vec<DataColumn> = vec![]; 
+
+        for col in col_data_vec
+        {
+            match col
+            {
+                ColDataWrapper::IntColData(_) => {
+                    batches.push(DataColumn::Int64(
+                        Int64Column::new(vec![])
+                    ));
+                },
+                ColDataWrapper::StrColData(_) => {
+                    batches.push(DataColumn::Varchar(
+                        VarcharColumn::new(vec![])
+                    ));
+                }
+            }
+        }
+
+        return batches;
+    }
+
+    fn create_csv_reader(
+        query_data: &CopyQuery, 
+        f_csv: tokio::fs::File
+    ) -> csv_async::AsyncReader<tokio::fs::File>
+    {
+        if query_data.csv_contains_header() 
+        {
+            return csv_async::AsyncReaderBuilder::new()
+                .has_headers(true)
+                .create_reader(f_csv);
+        } 
+        else 
+        {
+            return csv_async::AsyncReaderBuilder::new()
+                .has_headers(false)
+                .create_reader(f_csv)
+        }
+    }
+
+    async fn open_csv_file(
+        src_file_path: &str, 
+        table_name: &str
+    ) -> Result<tokio::fs::File, DbError>
+    {
+        match tokio::fs::File
+            ::open(src_file_path).await {
+                Ok(f) => {
+                    return Ok(f);
+                },
+                Err(_) => {
+                    return Err(DbError::NotFound(format!("File path: '{}' to csv for table: '{}' couldn't be opened", 
+                    src_file_path, table_name)));
+                }
+        };
+
+    }
+
+    async fn validate_csv_header(
+        query_data: &CopyQuery, 
+        table_meta: &TableMetadata,
+        col_name_to_idx_map: &HashMap<String, usize>,
+        csv_rdr: &mut csv_async::AsyncReader<tokio::fs::File>
+    ) -> Result<(), DbError>
+    {
+        if query_data.csv_contains_header()
+        {
+            let headers = match csv_rdr.headers().await {
+                Ok(val) => val,
+                Err(e) => {
+                    return Err(DbError::Other(format!(
+                        "Malformed csv, error: {}", e
+                    )));
+                }
+            };
+
+            // If we have mapping we don't need to check anything, since there
+            // might be i.e. less columns and one column will be mapped to many
+            // columns
+            match query_data.dest_columns()
+            {
+                None => {
+
+                    let columns = table_meta.columns();
+                    // If there are no destination columns, we expect to have a csv
+                    // with exact number of columns as in our table and these 
+                    // columns need to have same ordering and names
+                    if headers.len() != columns.len()
+                    {
+                        return Err(
+                            DbError::WrongSize(
+                                format!(
+                                    "In Copy query for table: '{}', no destination columns specified, csv hase different nbr of columns ({}) than table schema ({})", 
+                                    table_meta.table_name(), headers.len(), columns.len()
+                                )
+                            )
+                        )
+                    }
+                    for (idx, col_name) in headers.iter().enumerate()
+                    {
+                        // we can unwrap since above we checked if the same lens
+                        let col_name_in_table = columns.get(idx).unwrap().c_name();
+                        if !col_name_to_idx_map.contains_key(col_name)
+                        {
+                            return Err(
+                                DbError::NotFound(
+                                    format!(
+                                        "In COPY query for table: {}, without destination columns specified, in csv there is column with name: '{}' that doesn't exist in table schema", table_meta.table_name(), col_name
+                                    )
+                                )
+                            );
+                        }
+                        if col_name != col_name_in_table
+                        {
+                            return Err(
+                                DbError::NotFound(
+                                    format!(
+                                        "In COPY query for table: {}, without destination columns specified, in csv: {} column has name: '{}' which is different from column in table schema at the same position: '{}' ", 
+                                        table_meta.table_name(), idx, col_name,
+                                        col_name_in_table
+                                    )
+                                )
+                            );
+                        }
+                    }
+                },
+                Some(dest_cols) => {
+                    let columns = table_meta.columns();
+                    // If there are destination columns, we expect to have at 
+                    // least as many columns in csv as in our db schema. 
+                    // Because otherwise mapping cannot be done
+                    if headers.len() < columns.len() 
+                    || headers.len() != dest_cols.len()
+                    {
+                        return Err(
+                            DbError::WrongSize(
+                                format!(
+                                    "In Copy query for table: '{}', with destination columns specified, csv has different nbr of columns ({}) than parameter dest_columns ({})", 
+                                    table_meta.table_name(), headers.len(), dest_cols.len()
+                                )
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    fn validate_copy_query(
+        copy_q: &CopyQuery, 
+        table_meta: &TableMetadata
+    ) -> Result<(), DbError>
+    {
+        if copy_q.dest_table_name() != table_meta.table_name()
+        {
+            return Err(
+                DbError::Other(
+                    format!(
+                        "In copy query we have table name: '{}', however in table metadata we have: '{}'", copy_q.table_name(), table_meta.table_name()
+                    )
+                )
+            );
+        }
+
+        if let Some(dest_columns) = copy_q.dest_columns()
+        {
+            let table_col_names: HashSet<&str> = table_meta
+                                    .columns()
+                                    .iter()
+                                    .map(|col| col.c_name())
+                                    .collect();
+
+            if dest_columns.len() < table_col_names.len()
+            {
+                return Err(
+                    DbError::SizeMismatch {
+                        msg: format!(
+                            "Number of destination columns ({}) is less than a number of table columns ({}), thus not all columns can be matched, and we do not allow NULL values",
+                            dest_columns.len(),
+                            table_col_names.len()
+                        ),
+                        size_1: dest_columns.len(),
+                        size_2: table_col_names.len()
+                });
+            }
+
+            // Check if all dest column names exist in our table
+            for col_name in dest_columns
+            {
+                if !table_col_names.contains(&col_name.as_str())
+                {
+                    return Err(DbError::NotFound(
+                        format!("Dest Column '{}' not found in table '{}'.\nAvailable columns in this table are: {:?}", 
+                        col_name, 
+                        table_meta.table_name(),
+                        table_col_names
+                    )
+                ));
+                }
+            }
+
+            // We probably should allow mapping one csv column to many our cols
+            // // Check for duplicate column names in destination columns
+            // let mut seen_cols = std::collections::HashSet::new();
+            // for col_name in dest_columns {
+            //     if !seen_cols.insert(col_name) {
+            //         return Err(DbError::Other(
+            //             format!("Duplicate column name '{}' in destinationColumns for table: '{}'", col_name, table_meta.table_name())
+            //         ));
+            //     }
+            // }
+
+        }
+        return Ok(());
     }
 
     async fn handle_select(
