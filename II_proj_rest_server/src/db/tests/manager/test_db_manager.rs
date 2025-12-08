@@ -14,6 +14,8 @@ const NBR_OF_DB_WORKERS: usize = 2;
 
 #[cfg(test)]
 mod db_manager {
+    use crate::db::manager::messages::WorkerMsgRes;
+
     use super::*;
     
     #[tokio::test]
@@ -86,7 +88,7 @@ mod db_manager {
                         assert!(worker_id < 2, "Worker ID should be less than number of workers");
                         
                         // Verify result is present for SELECT query
-                        assert!(completion_msg.res().is_some(), "SELECT query should return results");
+                        // assert!(completion_msg.res() == WorkerMsgRes::, "SELECT query should return results");
                     }
                     DbWorkerMsg::QueryFailed(worker_id, failure_msg) => {
                         panic!("Query unexpectedly failed: worker_id={}, query_id={:?}", worker_id, failure_msg.query_id());

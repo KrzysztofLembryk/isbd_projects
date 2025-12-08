@@ -1,10 +1,9 @@
-use crate::schemas::query::{Query, QueryResult, QueryStatus};
+use crate::schemas::query::{AllowedQuery, Query, QueryResult, QueryStatus, QueryType};
 use crate::db::errors::DbError;
 use crate::schemas::error::{MultipleProblemsError};
 
 use std::collections::VecDeque;
 use std::collections::HashMap;
-use actix_web::http::header::q;
 use uuid::Uuid;
 
 pub struct QueryStore
@@ -27,9 +26,59 @@ impl QueryStore
         }
     }
 
+    pub fn get_query_mut_ref(
+        &mut self, 
+        query_id: Uuid
+    ) -> Result<&mut Query, DbError>
+    {
+        match self.queries.get_mut(&query_id)
+        {
+            Some(v) => return Ok(v),
+            None => {
+                return Err(
+                    DbError::InternalDbError(
+                        format!("QueryStore::get_query_mut_ref - no query with id: {} exists in query store", query_id)
+                    )
+                );
+            }
+        }
+    }
+
     pub fn queries(&self) -> &HashMap<Uuid, Query>
     {
         &self.queries
+    }
+
+    pub fn get_query_type(&self, query_id: &Uuid) -> Result<QueryType, DbError>
+    {
+        match self.queries.get(query_id)
+        {
+            Some(q) => {
+                match q.query_def()
+                {
+                    AllowedQuery::CopyQ(_) => return Ok(QueryType::CopyQuery),
+                    AllowedQuery::SelectQ(_) => return Ok(QueryType::SelectQuery),
+                }
+            }
+            None => return Err(
+                DbError::InternalDbError(
+                    format!("QueryStore::get_query_type - query with id: '{}' doesnt exist", query_id)
+                )
+            )
+        }
+    }
+
+    pub fn get_query_table_name(&self, query_id: &Uuid) -> Result<&str, DbError>
+    {
+        match self.queries.get(query_id)
+        {
+            Some(q) => return Ok(q.table_name()),
+            None => return Err(
+                DbError::InternalDbError(
+                    format!("QueryStore::get_query_table_name - query with id: '{}' doesnt exist", query_id)
+                )
+            )
+        }
     }
 
     pub fn insert_query(&mut self, q: Query) -> Result<(), DbError>
@@ -50,13 +99,9 @@ impl QueryStore
         self.query_queue.push_back(*q_id);
     }
 
-    pub fn pop_pending_query(&mut self) -> Option<&mut Query>
+    pub fn pop_pending_query(&mut self) -> Option<Uuid>
     {
-        if let Some(q_id) = self.query_queue.pop_front()
-        {
-            return self.queries.get_mut(&q_id);
-        }
-        None
+        return self.query_queue.pop_front();
     }
 
     pub fn store_query_result(&mut self, q_id: &Uuid, q_res: QueryResult)
@@ -109,4 +154,29 @@ impl QueryStore
         Err(DbError::InternalDbError(format!("QueryStore::update_query_status: query with id: '{}'", q_id)))
     }
 
+    pub fn check_if_query_is_copy(
+        &self, 
+        query_id: &Uuid
+    ) -> Result<bool, DbError>
+    {
+        let query = match self.queries.get(query_id) {
+            Some(q) => q,
+            None => {
+                return Err(
+                    DbError::InternalDbError(
+                        format!("QueryStore::check_if_query_is_copy - query with id '{}' does not exist in QueryStore, corrupted db state", query_id)
+                    )
+                );
+            }
+        };
+        match query.query_def()
+        {
+            AllowedQuery::CopyQ(_) => {
+                return Ok(true);
+            }
+            AllowedQuery::SelectQ(_) => {
+                return Ok(false);
+            }
+        }
+    }
 }

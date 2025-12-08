@@ -21,8 +21,7 @@ pub struct ColHeader
     is_overflow: bool,  // OBSOLETE
     size_of_data: u32,  // size of data without metadata
     col_name: String,   // max 255 characters
-    // probably dir_path should be an Option
-    dir_path: String    // column files for given table are stored in this dir
+    table_dir_path: String // column files for given table are stored in this dir
 }
 
 impl ColHeader
@@ -45,7 +44,7 @@ impl ColHeader
             is_overflow, 
             size_of_data, 
             col_name,
-            dir_path: String::from(dir_path),
+            table_dir_path: String::from(dir_path),
         })
     }
 
@@ -76,7 +75,7 @@ impl ColHeader
             is_overflow, 
             size_of_data, 
             self.col_name.clone(),
-            &self.dir_path
+            &self.table_dir_path
         )
     }
 
@@ -87,27 +86,19 @@ impl ColHeader
     /// - We do not encode column header data
     pub async fn save_to_file(
         &self, 
-        dir_path: &str
     ) -> Result<(String, tokio_fs::File), DbError>
     {
-        if dir_path.len() == 0
+        if self.table_dir_path.len() == 0
         {
             return Err(DbError::Other(
                 "ColHeader::save_to_file - directory path is empty".to_string()
             ));
         }
 
-        let last_path_char = dir_path.as_bytes()[dir_path.len() - 1];
-        let file_name: String;
+        tokio_fs::create_dir_all(&self.table_dir_path).await?;
 
-        if last_path_char == b'/'
-        {
-            file_name = format!("{}{}_{}", dir_path, self.col_name, self.col_file_id);
-        }
-        else 
-        {
-            file_name = format!("{}/{}_{}", dir_path, self.col_name, self.col_file_id);
-        }
+        let file_name: String = format!("{}/{}_{}", self.table_dir_path, 
+                                        self.col_name, self.col_file_id);
 
         let mut f = tokio_fs::File::create(&file_name).await?;
 
@@ -351,19 +342,19 @@ impl ColHeader
 
     pub fn dir_path(&self) -> &str
     {
-        &self.dir_path
+        &self.table_dir_path
     }
 
     pub fn get_file_path(&self) -> String
     {
-        format!("{}/{}_{}", self.dir_path, self.col_name ,self.col_file_id)
+        format!("{}/{}_{}", self.table_dir_path, self.col_name ,self.col_file_id)
     }
 
     pub fn get_next_file_path(&self) -> Result<String, DbError>
     {
         if self.is_overflow
         {
-            return Ok(format!("{}/{}_{}", self.dir_path, self.col_name ,self.col_file_id + 1));
+            return Ok(format!("{}/{}_{}", self.table_dir_path, self.col_name ,self.col_file_id + 1));
         }
 
         Err(DbError::Other("There is no next file path since there is no overflow in current file".to_string()))

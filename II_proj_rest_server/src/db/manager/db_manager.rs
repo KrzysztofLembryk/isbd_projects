@@ -1,10 +1,10 @@
 use crate::db::storage::metadata::{DbMetadata, TableMetadata};
 use crate::db::constants::{MAX_DB_WORKERS};
 use crate::schemas::error::MultipleProblemsError;
-use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryResult, QueryStatus, SelectQuery, ShallowQuery};
+use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryResult, QueryStatus, QueryType, SelectQuery, ShallowQuery};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::errors::DbError;
-use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, QueryCompletionMsg, QueryFailureMsg, ResMsg};
+use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, DbWorkerMsg, QueryCompletionMsg, QueryFailureMsg, ResMsg, WorkerMsgRes};
 use crate::db::manager::db_workers::workers_manager::WorkersManager;
 use crate::db::manager::query_store::QueryStore;
 
@@ -258,12 +258,16 @@ impl DbManager
             Some(&q_msg.table_id()), 
             None
         )?;
+        // if we got copy query this will lift the lock
+        let is_copy = self.query_store
+            .check_if_query_is_copy(&q_msg.query_id())?;
+        db_meta.lift_copy_lock_from_table(&q_msg.table_id(), is_copy)?;
 
         self.query_store.update_query_status(
             &q_msg.query_id(), 
             QueryStatus::COMPLETED
         )?;
-        self.store_completed_query(q_msg);
+        self.store_completed_query(q_msg)?;
         self.execute_next_query()?;
 
         Ok(())
@@ -288,6 +292,10 @@ impl DbManager
             None,
         )?;
 
+        let is_copy = self.query_store
+            .check_if_query_is_copy(&q_msg.query_id())?;
+        db_meta.lift_copy_lock_from_table(&q_msg.table_id(), is_copy)?;
+
         self.query_store.update_query_status(
             &q_msg.query_id(), 
             QueryStatus::FAILED
@@ -301,75 +309,134 @@ impl DbManager
 
     fn execute_next_query(&mut self) -> Result<bool, DbError>
     {
+        // TODO: move code into separate functions
         if self.workers_manager.is_any_worker_available()
         {
-            if let Some(pending_q) = self.query_store.pop_pending_query()
+            // TODO: We should loop here till we get the same pending_id, so 
+            // that copy query does not stop our other queries
+            let pending_q_id = match self.query_store.pop_pending_query()
             {
-                let db_meta = self.db_meta
-                        .as_mut()
-                        .ok_or_else(|| DbError::InternalDbError("DbManager::post_query: database was not initialized".to_string()
-                ))?;
-                // DbMeta plans query execution by checking if table for query 
-                // exists, and if it does it gives query file paths and column info 
-                let query_plan_data = match db_meta.plan_query_execution(pending_q)
-                {
-                    Ok(val) => val,
-                    Err(e) => {
-                        pending_q.update_status(QueryStatus::FAILED);
+                Some(q) => q,
+                None => return Ok(false)
+            };
+            let table_name = self.query_store.get_query_table_name(&pending_q_id)?;
+            let query_type = self.query_store.get_query_type(&pending_q_id)?;
 
-                        match db_meta.decrease_nbr_of_queries_operating_on_table(
-                            None, 
-                            Some(pending_q.table_name())
-                        )
-                        {
-                            Ok(_) => return Err(e),
-                            Err(second_err) => return Err(DbError::InternalDbError(format!("Error1: {}\nError2: {}", e, second_err)))
-                        }
+            let db_meta = self.db_meta
+                    .as_mut()
+                    .ok_or_else(|| DbError::InternalDbError("DbManager::post_query: database was not initialized".to_string()
+            ))?;
+
+            if !DbManager::acquire_copy_lock_if_needed(
+                &query_type,
+                table_name,
+                db_meta
+            )? 
+            {
+                // We failed to acquire lock, meaning some copy query is 
+                // currently beeing executed on this table, thus we push 
+                // this Query back to the end of queue.
+                self.query_store.schedule_for_execution(&pending_q_id);
+                return Ok(false);
+            }
+
+            let pending_q = self.query_store.get_query_mut_ref(pending_q_id)?;
+
+            // DbMeta plans query execution by checking if table for query 
+            // exists, and if it does it gives query file paths and column info 
+            let query_plan_data = match db_meta.plan_query_execution(pending_q)
+            {
+                Ok(val) => val,
+                Err(e) => {
+                    pending_q.update_status(QueryStatus::FAILED);
+
+                    match db_meta.decrease_nbr_of_queries_operating_on_table(
+                        None, 
+                        Some(pending_q.table_name())
+                    )
+                    {
+                        Ok(_) => return Err(e),
+                        Err(second_err) => return Err(DbError::InternalDbError(format!("Error1: {}\nError2: {}", e, second_err)))
                     }
-                };
-    
-                pending_q.update_status(QueryStatus::RUNNING);
-    
-                match self.workers_manager.execute_query(query_plan_data)
-                {
-                    Ok(_) => {
-                        return Ok(true)
-                    },
-                    Err(e) => {
-                        pending_q.update_status(QueryStatus::FAILED);
+                }
+            };
 
-                        match db_meta.decrease_nbr_of_queries_operating_on_table(
-                            None, 
-                            Some(pending_q.table_name())
-                        )
-                        {
-                            Ok(_) => return Err(e),
-                            Err(second_err) => return Err(DbError::InternalDbError(format!("Error1: {}\nError2: {}", e, second_err)))
-                        }
+            pending_q.update_status(QueryStatus::RUNNING);
+
+            match self.workers_manager.execute_query(query_plan_data)
+            {
+                Ok(_) => {
+                    return Ok(true)
+                },
+                Err(e) => {
+                    pending_q.update_status(QueryStatus::FAILED);
+
+                    match db_meta.decrease_nbr_of_queries_operating_on_table(
+                        None, 
+                        Some(pending_q.table_name())
+                    )
+                    {
+                        Ok(_) => return Err(e),
+                        Err(second_err) => return Err(DbError::InternalDbError(format!("Error1: {}\nError2: {}", e, second_err)))
                     }
                 }
             }
         }
+        // Why we return bool? I don't remember
         Ok(false)
     }
 
-    fn store_completed_query(&mut self, completed_q: QueryCompletionMsg)
+    fn acquire_copy_lock_if_needed(
+        query_type: &QueryType,
+        table_name: &str,
+        db_meta: &mut DbMetadata,
+    ) -> Result<bool, DbError>
+    {
+        match query_type
+        {
+            QueryType::SelectQuery => {
+                return Ok(true);
+            },
+            QueryType::CopyQuery => {
+                let table_id = db_meta.get_table_id(table_name)?;
+
+                // function returns true if lock was acquired, false otherwise
+                return db_meta.acquire_copy_lock_for_table(&table_id);
+            }
+        }
+    }
+
+    fn store_completed_query(
+        &mut self, 
+        completed_q: QueryCompletionMsg
+    ) -> Result<(), DbError>
     {
         let query_id = completed_q.query_id();
+        let table_id = completed_q.table_id();
         let q_res = completed_q.res();
 
         match q_res
         {
-            Some(res) => {
+            WorkerMsgRes::SelectRes(s_res) => {
                 self.query_store.store_query_result(
                     &query_id,
-                    res
+                    s_res
                 );
-            }
-            None => {
-                // This means it was CopyQuery so we don't need to store it 
-            }
+            },
+            WorkerMsgRes::CopyRes(c_res) => {
+                // We are not storing copy query results BUT we need to update
+                // table columns filepaths
+                let db_meta = self.db_meta
+                        .as_mut()
+                        .ok_or_else(|| DbError::InternalDbError("DbManager::handle_completed_query: database was not initialized".to_string()
+                ))?;
+                db_meta.append_newly_created_column_files(
+                    &table_id, 
+                    c_res
+                )?;
+            },
         }
+        return Ok(());
     }
 
     fn store_failed_query(&mut self, failed_q: QueryFailureMsg)
@@ -489,228 +556,4 @@ impl DbManager
         Ok(())
     }
 
-    // Currently naive implementation just to create some files for our db <br>
-    // !!!!!!!! <br> 
-    // !!!!!!!! NOT STREAMING, so probably huge csv files will give error <br>
-    // !!!!!!!! 
-    // pub fn init_from_csv(
-    //     &mut self, 
-    //     csv_path: &str, 
-    //     delim: u8
-    // ) -> Result<(), DbError>
-    // {
-    //     let (metadata, col_data) = 
-    //             DbManager::_get_data_and_metadata_from_csv(csv_path, delim)?;
-    //     let col_names = metadata.col_names();
-    //     let col_types = metadata.col_types();
-    //     let n_cols = col_names.len();
-
-    //     self._init_storage_maps(n_cols, col_names, col_types);
-
-    //     for (idx, col_data_vec) in col_data.iter().enumerate()
-    //     {
-    //         let c_type = LogicalColType::from_u8(*col_types.get(idx).unwrap())?;
-    //         let c_name = col_names.get(idx).unwrap().clone();
-
-    //         if c_type == LogicalColType::IntType
-    //         {
-    //             let col_data_storage = self.int_storage_map.get_mut(&c_name).unwrap();
-
-    //             // Parse strings to i64
-    //             let mut int_values: Vec<i64> = Vec::new();
-    //             for str_val in col_data_vec {
-    //                 match str_val.parse::<i64>() {
-    //                     Ok(val) => int_values.push(val),
-    //                     Err(e) => return Err(
-    //                         DbError::Other(
-    //                             format!("Failed to parse '{}' as i64: {}", str_val, e)
-    //                         ))
-    //                 }
-    //             }
-                
-    //             // Process data in BATCH_SIZE chunks 
-    //             for chunk in int_values.chunks(BATCH_SIZE) 
-    //             {
-    //                 col_data_storage.save_to_file(chunk)?; 
-    //             }
-    //         }
-    //         else 
-    //         {
-    //             let col_data_storage = self.str_storage_map.get_mut(&c_name).unwrap();
-
-    //             for chunk in col_data_vec.chunks(BATCH_SIZE)
-    //             {
-    //                 col_data_storage.save_to_file(chunk)?;
-    //             }
-    //         }
-    //     }
-
-    //     metadata.save_to_file(METADATA_FILE_PATH)?;
-
-    //     self.db_meta = Some(metadata);
-
-    //     Ok(())
-    // }
-
-    // Function reads whole column data and calculates either mean of its 
-    // values or counts how many of each character there is 
-    // pub fn read_col_data(&mut self, col_name: &str) -> Result<usize, DbError>
-    // {
-    //     let meta = self.db_meta.as_ref()
-    //         .ok_or_else(|| DbError::Other(
-    //             "read_col_data - database is not initialized, db_meta is None".to_string()
-    //         ))?;
-
-    //     if !meta.col_names_idxs().contains_key(col_name)
-    //     {
-    //         return Err(DbError::InvalidColumnName {
-    //             msg: "Column name not present in database".to_string(),
-    //             name: col_name.to_string()
-    //         });
-    //     }
-
-    //     let c_idx = *meta.col_names_idxs()
-    //         .get(col_name)
-    //         .ok_or_else(|| DbError::Other(
-    //             format!("read_col_data - col_names_idx - column '{}' index not found", col_name)
-    //         ))?;
-
-    //     let c_type = LogicalColType::from_u8(
-    //         *meta.col_types()
-    //             .get(c_idx)
-    //             .ok_or_else(|| DbError::Other(
-    //                 format!("read_col_data - column type at index {} not found", c_idx)
-    //             ))?
-    //     )?;
-
-    //     let file_path = meta.col_files_paths().get(col_name).unwrap().first().unwrap();
-
-    //     let f = File::open(file_path)?;
-    //     let mut n_rows: usize = 0;
-
-    //     if c_type == LogicalColType::IntType
-    //     {
-    //         let col_data = ColData::<i64>::read_from_file(f)?;
-    //         n_rows = col_data.n_rows();
-
-    //         self.int_storage_map.insert(
-    //             String::from(col_name),  
-    //             col_data
-    //         );
-    //     }
-    //     else 
-    //     {
-    //         let col_data = ColData::<String>::read_from_file(f)?;
-    //         n_rows = col_data.n_rows();
-
-    //         self.str_storage_map.insert(
-    //             String::from(col_name),  
-    //             col_data
-    //         );
-    //     }
-
-    //     Ok(n_rows)
-    // }
-
-    // pub fn read_all_col_data(&mut self) -> Result<(), DbError>
-    // {
-    //     let meta = self.db_meta.as_ref()
-    //         .ok_or_else(|| DbError::Other(
-    //             "read_all_col_data - database is not initialized, db_meta is None".to_string()
-    //         ))?;
-
-    //     let column_names = meta.col_names().clone();
-
-    //     for name in column_names
-    //     {
-    //         if !self.is_row_count_init
-    //         {
-    //             self.is_row_count_init = true;
-    //             self.row_count = self.read_col_data(&name)?;
-    //         }
-    //         else 
-    //         {
-    //             let n = self.read_col_data(&name)?;
-    //             if self.row_count != n
-    //             {
-    //                 return Err(DbError::SizeMismatch {
-    //                     msg: format!("DbManager::read_all_col_data - column '{}' has different row count", name),
-    //                     size_1: n,
-    //                     size_2: self.row_count
-    //                 });
-    //             }
-    //         }
-    //     }
-
-    //     for (name, data) in &self.int_storage_map
-    //     {
-    //         println!("{}, avg: {}", name, data.result());
-    //     }
-
-    //     for (name, data) in &self.str_storage_map
-    //     {
-
-    //         println!("{}, count: {}", name, data.result());
-    //     }
-
-    //     Ok(())
-    // }
-
-    // ################# PRIVATE FUNCTIONS ######################
-
-    // fn _init_storage_maps(
-    //     &mut self, 
-    //     n_cols: usize, 
-    //     col_names: &Vec<String>,
-    //     col_types: &Vec<u8>  
-    // )
-    // {
-    //     // In metadata we have all information about columns so we can populate
-    //     // hash map that will store column_name : ColData objects which handle
-    //     // deserialization and serialization of data
-    //     for idx in 0..n_cols
-    //     {
-    //         let col_name = col_names.get(idx).unwrap().clone();
-    //         let col_type = LogicalColType
-    //                     ::from_u8(*col_types.get(idx).unwrap())
-    //                     .unwrap();
-    //         let col_h = ColHeader
-    //                     ::new_empty(col_type, col_name.clone())
-    //                     .unwrap();
-
-    //         if col_type == LogicalColType::IntType
-    //         {
-    //             let col_d: ColData<i64> = ColData::new(col_h).unwrap();
-    //             self.int_storage_map.insert(col_name, col_d);
-
-    //         }
-    //         else 
-    //         {
-    //             let col_d: ColData<String> = ColData::new(col_h).unwrap();
-    //             self.str_storage_map.insert(col_name, col_d);
-    //         }
-    //     }
-    // }
-
-
-    // fn _get_data_and_metadata_from_csv(
-    //     csv_path: &str, 
-    //     delim: u8
-    // ) -> Result<(DbMetadata, Vec<Vec<String>>), DbError>
-    // {
-    //     if delim != b',' && delim != b'\t'
-    //     {
-    //         return Err(DbError::Other(
-    //             "We support only csv (comma) or tsv (tab) delimiters".to_string()
-    //         ));
-    //     }
-
-    //     let (types, names, col_data) = csv_reader::read_csv(csv_path, delim);
-
-    //     let metadata = DbMetadata::new(types, names)?;
-
-    //     metadata.save_to_file(METADATA_FILE_PATH)?;
-
-    //     Ok((metadata, col_data))
-    // }
 }

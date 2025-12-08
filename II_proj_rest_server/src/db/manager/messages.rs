@@ -144,6 +144,11 @@ impl QueryCompletionMsg
     {
         self.res
     }
+
+    pub fn res_ref(&self) -> &WorkerMsgRes
+    {
+        &self.res
+    }
 }
 
 pub trait BaseQueryDataInfo

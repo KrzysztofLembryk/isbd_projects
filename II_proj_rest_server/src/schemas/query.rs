@@ -23,6 +23,12 @@ pub enum AllowedQuery
     CopyQ(CopyQuery)
 }
 
+pub enum QueryType
+{
+    CopyQuery,
+    SelectQuery
+}
+
 // We need to implement serialization since we dont want our response to contain
 // SELECT_Q or COPY_Q in json
 impl Serialize for AllowedQuery

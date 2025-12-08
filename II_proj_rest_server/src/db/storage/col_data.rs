@@ -171,12 +171,12 @@ impl<T: ColType> ColData<T>
 
                 // We no longer need old col_header, we will write to a new file
                 self.header = self.header.create_next()?;
-                let (_, mut new_f) = self.header.save_to_file(DB_DATA_DIR).await?;
+                let (_, mut new_f) = self.header.save_to_file().await?;
 
                 // We do save
-                let bytes_read: usize = bytes_read - available_space;
+                let size_of_rest_of_data: usize = bytes_read - available_space;
                 
-                self.header.increase_data_size(bytes_read as u32).unwrap();
+                self.header.increase_data_size(size_of_rest_of_data as u32).unwrap();
                 new_f.seek(SeekFrom::End(0)).await?;
                 new_f.write(&buf[available_space..bytes_read]).await?;
 
@@ -250,7 +250,7 @@ impl<T: ColType> ColData<T>
             self.first_time_saving = false;
 
             // we get file handle to created file, to which we will append data
-            (_, f) = self.header.save_to_file(DB_DATA_DIR).await?;
+            (_, f) = self.header.save_to_file().await?;
         }
         else 
         {
