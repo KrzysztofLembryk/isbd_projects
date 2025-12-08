@@ -15,6 +15,8 @@ type TableId = Uuid;
 type WorkerId = usize;
 type RowCount = usize;
 type FlushResult = bool;
+type ColName = String;
+type LastColFileId = u16;
 
 pub enum DbCmd
 {
@@ -102,14 +104,18 @@ impl QueryFailureMsg
     }
 }
 
+pub enum WorkerMsgRes
+{
+    SelectRes(QueryResult),
+    CopyRes(Vec<(ColName, LastColFileId)>)
+}
+
 pub struct QueryCompletionMsg
 {
     query_id: Uuid,
     table_id: Uuid, 
     n_rows: i32,
-    // If is None, this means it was CopyQuery
-    // otherwise it was SelectQuery
-    res: Option<QueryResult>,
+    res: WorkerMsgRes,
 }
 
 impl QueryCompletionMsg
@@ -118,7 +124,7 @@ impl QueryCompletionMsg
         query_id: Uuid,
         table_id: Uuid,
         n_rows: i32,
-        res: Option<QueryResult>
+        res: WorkerMsgRes
     ) -> QueryCompletionMsg
     {
         QueryCompletionMsg { query_id, table_id, n_rows, res }
@@ -134,7 +140,7 @@ impl QueryCompletionMsg
         self.query_id
     }
 
-    pub fn res(self) -> Option<QueryResult>
+    pub fn res(self) -> WorkerMsgRes
     {
         self.res
     }

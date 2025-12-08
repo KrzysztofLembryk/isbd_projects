@@ -1,6 +1,6 @@
 use self::super::{are_columns_ok, is_metadata_ok, create_dir_path, create_file_path, DbMetadata, TableMetadata, ColMetadata, TableId, DbError,
 TableSchema, Column, DeleteFlag};
-use super::super::super::constants::{LogicalColType, MAX_COL_COUNT};
+use super::super::super::constants::{LogicalColType};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -383,7 +383,7 @@ mod is_metadata_ok {
 
         table_map.insert(
             table_id, 
-            TableMetadata::new("table_invalid_cols", &table_id, columns)
+            TableMetadata::new("table_invalid_cols", &table_id, columns, "")
         );
 
         assert!(is_metadata_ok(
@@ -412,7 +412,7 @@ mod is_metadata_ok {
 
         table_map.insert(
             table_id, 
-            TableMetadata::new("table_long_col", &table_id, columns)
+            TableMetadata::new("table_long_col", &table_id, columns, "")
         );
 
         assert!(is_metadata_ok(
@@ -560,13 +560,15 @@ fn get_correct_metadata() -> (u16, String, String, HashMap<TableId, TableMetadat
     table_map.insert(id_1, TableMetadata { 
         table_name: String::from("table_1"), 
         table_id: Uuid::new_v4(),
-        columns: columns.clone()
+        columns: columns.clone(),
+        table_dir_path: "".to_string()
     });
 
     table_map.insert(id_2, TableMetadata { 
         table_name: String::from("table_2"), 
         table_id: Uuid::new_v4(),
-        columns: columns 
+        columns: columns,
+        table_dir_path: "".to_string()
     });
     (table_count, data_dir_path, metadata_file_path, table_map)
 }

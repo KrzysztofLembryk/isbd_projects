@@ -1,14 +1,17 @@
 use std::collections::{HashMap, HashSet};
+use std::usize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, SeekFrom, AsyncSeekExt};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::db::constants::BATCH_SIZE;
+use crate::db::constants::{BATCH_SIZE, CSV_DELIM, COPY_QUERY_NAME, SELECT_QUERY_NAME};
 use crate::db::errors::DbError;
-use crate::db::manager::messages::{BaseQueryDataInfo, CopyQData, DbCmd, DbWorkerMsg, QueryCompletionMsg, QueryData, QueryFailureMsg, SelectQData}; 
+use crate::db::manager::messages::{BaseQueryDataInfo, CopyQData, DbCmd, DbWorkerMsg, QueryCompletionMsg, QueryData, QueryFailureMsg, SelectQData, WorkerMsgRes}; 
 use crate::db::storage::metadata::{ColDataWrapper, TableMetadata};
 use crate::schemas::column::{DataColumn, Int64Column, VarcharColumn};
 use crate::schemas::query::{CopyQuery, QueryResult, QueryTableName};
 use crate::schemas::error::{Error, MultipleProblemsError, Problem};
+use crate::schemas::table;
+use uuid::Uuid;
 
 use log::{info, warn, debug, error};
 
@@ -82,22 +85,60 @@ impl QueryWorker
             QueryData::CopyQ(c_q) => {
                 println!("Worker '{}' got COPY QUERY: {:?}", worker_id, c_q);
 
-                let res_msg = QueryWorker::handle_copy(worker_id, c_q).await;
-                
-                // self.send_msg_to_db(DbWorkerMsg::QueryFailed(
-                //     worker_id, 
-                //     failure_msg
-                // ));
+                let query_id = c_q.query_id();
+                let table_id = c_q.table_id();
+                let table_name = c_q.table_metadata().table_name().to_string();
+                let res = QueryWorker::handle_copy(c_q).await;
+                let res_msg = QueryWorker::create_copy_query_res_msg(
+                    res,
+                    worker_id,
+                    query_id,
+                    table_id,
+                    &table_name
+                );
+
+                self.send_msg_to_db(res_msg);
             },
         }
     }
 
-
+    fn create_copy_query_res_msg(
+        res: Result<(Vec<(String, u16)>, i32), DbError>,
+        worker_id: usize,
+        query_id: Uuid,
+        table_id: Uuid,
+        table_name: &str,
+    ) -> DbWorkerMsg
+    {
+        match res
+        {
+            Ok((final_col_file_ids, n_rows)) => {
+                return 
+                    DbWorkerMsg::QueryCompleted(
+                        worker_id,
+                        QueryCompletionMsg::new(
+                            query_id, 
+                            table_id, 
+                            n_rows, 
+                            WorkerMsgRes::CopyRes(final_col_file_ids)
+                ));
+            },
+            Err(db_err) => {
+                return QueryWorker::msg_from_db_err(
+                    db_err, 
+                    worker_id, 
+                    query_id, 
+                    table_id, 
+                    table_name, 
+                    COPY_QUERY_NAME
+                );
+            }
+        }
+    }
 
     async fn handle_copy(
-        worker_id: usize,
         c_q: CopyQData
-    ) -> Result<(), DbError>
+    ) -> Result<(Vec<(String, u16)>, i32), DbError>
     {
         QueryWorker::validate_copy_query(
             c_q.query_data(), 
@@ -126,19 +167,19 @@ impl QueryWorker
             &mut csv_rdr
         ).await?;
 
-        QueryWorker::load_csv_data(query_data, table_meta, &mut csv_rdr).await?;
+        let (final_col_file_ids, row_count) = QueryWorker::load_csv_data(query_data, table_meta, &mut csv_rdr).await?;
 
         // TODO: add flag that given table has copy operation, and if it still
         // has this operation, we will move another copy to the end of queue
 
-        todo!("Implement")
+        return Ok((final_col_file_ids, row_count));
     }
 
     async fn load_csv_data(
         query_data: &CopyQuery, 
         table_meta: &TableMetadata,
         csv_rdr: &mut csv_async::AsyncReader<tokio::fs::File>
-    ) -> Result<Vec<(String, u16)>, DbError>
+    ) -> Result<(Vec<(String, u16)>, i32), DbError>
     {
         // col_data_vec needed for saving BATCH chunks of data to our file 
         // format
@@ -147,13 +188,22 @@ impl QueryWorker
         let mut batches: Vec<DataColumn> = 
             QueryWorker::init_batches_for_columns(&col_data_vec); 
         let mut record = csv_async::StringRecord::new();
-        let mut row_idx = if query_data.csv_contains_header() { 1 } else { 0 };
-        let mut row_count: usize = 0;
+        let mut row_count: i32 = 0;
 
         while csv_rdr.read_record(&mut record).await?
         {
-            row_idx += 1;
-            row_count += 1;
+            row_count = match row_count.checked_add(1) {
+                Some(val) => val,
+                None => {
+                    return Err(
+                        DbError::SizeExceeded { 
+                            msg: format!("While doing copy query, we read  too many rows from csv for table: {}", table_meta.table_name()), 
+                            max: i32::MAX as usize
+                        }
+                    )
+                }
+            };
+
             let vals_vec: Vec<&str> = record.iter().collect();
 
             match dest_cols
@@ -172,7 +222,7 @@ impl QueryWorker
                     QueryWorker::push_values_to_batches(
                         &vals_vec,
                         &mut batches,
-                        row_idx,
+                        row_count,
                         table_meta.table_name()
                     )?;
                 },
@@ -181,15 +231,23 @@ impl QueryWorker
                 }
             }
 
-            if row_count >= BATCH_SIZE
+            if row_count as usize % BATCH_SIZE == 0
             {
-                row_count = 0;
-
                 QueryWorker::save_batches_to_files(
                     &batches, 
                     &mut col_data_vec
                 ).await?;
             }
+        }
+
+        // Last batch might not be equal to BATCH_SIZE thus we need to check it
+        // and if it isnt we need to save it since loop didnt do it
+        if row_count as usize % BATCH_SIZE != 0
+        {
+            QueryWorker::save_batches_to_files(
+                &batches, 
+                &mut col_data_vec
+            ).await?;
         }
         
         // We will need this to update file paths in columns in metadata
@@ -211,7 +269,7 @@ impl QueryWorker
             })
             .collect();
 
-        return Ok(after_save_col_ids);
+        return Ok((after_save_col_ids, row_count));
     }
 
     async fn save_batches_to_files(
@@ -271,7 +329,7 @@ impl QueryWorker
     fn push_values_to_batches(
         vals_vec: &Vec<&str>,
         batches: &mut Vec<DataColumn>,
-        row_idx: usize,
+        row_idx: i32,
         table_name: &str
     ) -> Result<(), DbError>
     {
@@ -340,12 +398,14 @@ impl QueryWorker
         {
             return csv_async::AsyncReaderBuilder::new()
                 .has_headers(true)
+                .delimiter(CSV_DELIM)
                 .create_reader(f_csv);
         } 
         else 
         {
             return csv_async::AsyncReaderBuilder::new()
                 .has_headers(false)
+                .delimiter(CSV_DELIM)
                 .create_reader(f_csv)
         }
     }
@@ -535,6 +595,7 @@ impl QueryWorker
         let table_meta: &TableMetadata = s_q.table_metadata();
         let query_id = s_q.query_id();
         let table_id = table_meta.table_id();
+        let table_name = table_meta.table_name();
         let query_result = table_meta.read_table().await;
 
         match query_result
@@ -547,56 +608,18 @@ impl QueryWorker
                             query_id, 
                             table_id, 
                             n_rows, 
-                            Some(q_res)
+                            WorkerMsgRes::SelectRes(q_res)
                 ));
             },
-            Err(e) => {
-                match e
-                {
-                    DbError::InternalDbError(e) => {
-                        return DbWorkerMsg::InternalError(
-                            worker_id,
-                            QueryFailureMsg::new(
-                                query_id, 
-                                table_id, 
-                                MultipleProblemsError::new_with_one_problem(
-                                    &e,
-                                    &format!("QueryWorker::handle_select:: When reading table: '{}' we got error", table_meta.table_name())
-                            )
-                        ));
-                    },
-                    // We treat IOErrors as internalDbErrors and want to 
-                    // shutdown db, since here we are handling SELECT so only 
-                    // reading data from db, so this means that DbMetadata has
-                    // info about given table, but we couldnt read it (i.e. 
-                    // somebody removed files, or corrupted them).
-                    // Thus our whole db is in corrupted state and we want to 
-                    // end it's execution
-                    DbError::IoError(e) => {
-                        return DbWorkerMsg::InternalError(
-                            worker_id,
-                            QueryFailureMsg::new(
-                                query_id, 
-                                table_id, 
-                                MultipleProblemsError::new_with_one_problem(
-                                    &e.to_string(),
-                                    &format!("QueryWorker::handle_select:: When reading table: '{}' we got IO error", table_meta.table_name())
-                            )
-                        ));
-                    },
-                    _ => {
-                        return DbWorkerMsg::QueryFailed(
-                            worker_id,
-                            QueryFailureMsg::new(
-                            query_id, 
-                            table_id, 
-                            MultipleProblemsError::new_with_one_problem(
-                                &e.to_string(),
-                                &format!("QueryWorker::handle_select:: When reading table: '{}' we got error", table_meta.table_name())
-                            )
-                        ));
-                    }
-                }
+            Err(db_err) => {
+                return QueryWorker::msg_from_db_err(
+                    db_err, 
+                    worker_id, 
+                    query_id, 
+                    table_id, 
+                    table_name, 
+                    "select",
+                );
             }
         }
     }
@@ -608,4 +631,62 @@ impl QueryWorker
         // We could use HealthChecks Algorithm from Distributed Systems
         self.tx_to_db.send(DbCmd::DbWorker(msg)).unwrap();
     }
+
+    fn msg_from_db_err(
+        db_err: DbError,
+        worker_id: usize,
+        query_id: Uuid,
+        table_id: Uuid,
+        table_name: &str,
+        query_name: &str,
+    ) -> DbWorkerMsg
+    {
+        match db_err
+        {
+            DbError::InternalDbError(e) => {
+                return DbWorkerMsg::InternalError(
+                    worker_id,
+                    QueryFailureMsg::new(
+                        query_id, 
+                        table_id, 
+                        MultipleProblemsError::new_with_one_problem(
+                            &e,
+                            &format!("QueryWorker::{}:: When reading table: '{}' we got error", query_name, table_name)
+                    )
+                ));
+            },
+            // We treat IOErrors as internalDbErrors and want to 
+            // shutdown db, since here we are handling SELECT so only 
+            // reading data from db, so this means that DbMetadata has
+            // info about given table, but we couldnt read it (i.e. 
+            // somebody removed files, or corrupted them).
+            // Thus our whole db is in corrupted state and we want to 
+            // end it's execution
+            DbError::IoError(e) => {
+                return DbWorkerMsg::InternalError(
+                    worker_id,
+                    QueryFailureMsg::new(
+                        query_id, 
+                        table_id, 
+                        MultipleProblemsError::new_with_one_problem(
+                            &e.to_string(),
+                            &format!("QueryWorker::{}:: When reading table: '{}' we got IO error", query_name, table_name)
+                    )
+                ));
+            },
+            _ => {
+                return DbWorkerMsg::QueryFailed(
+                    worker_id,
+                    QueryFailureMsg::new(
+                    query_id, 
+                    table_id, 
+                    MultipleProblemsError::new_with_one_problem(
+                        &db_err.to_string(),
+                        &format!("QueryWorker::handle_select:: When reading table: '{}' we got error", table_name)
+                    )
+                ));
+            }
+        }
+    }
+
 }
