@@ -11,6 +11,18 @@ pub enum DataColumn
     Varchar(VarcharColumn),
 }
 
+impl DataColumn
+{
+    pub fn clear_batch(&mut self)
+    {
+        match self
+        {
+            DataColumn::Int64(i_c) => i_c.clear(),
+            DataColumn::Varchar(v_c) => v_c.clear(),
+        }
+    }
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug, Validate)]
 pub struct Column
 {
@@ -79,6 +91,11 @@ impl Int64Column
     {
         self.values.push(val);
     }
+
+    pub fn clear(&mut self)
+    {
+        self.values.clear();
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -102,5 +119,10 @@ impl VarcharColumn
     pub fn push(&mut self, val: &str)
     {
         self.values.push(String::from(val));
+    }
+
+    pub fn clear(&mut self)
+    {
+        self.values.clear();
     }
 }

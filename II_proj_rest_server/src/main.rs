@@ -3,8 +3,7 @@ use II_proj_rest_server::routes::queries::{get_queries, get_query_info, post_que
 use II_proj_rest_server::routes::results::{get_query_result};
 use II_proj_rest_server::routes::errors::{get_failed_query};
 use II_proj_rest_server::routes::system::get_sys_info;
-use II_proj_rest_server::db::constants::{DB_DATA_DIR, METADATA_FILE_PATH, MAX_DB_WORKERS};
-use II_proj_rest_server::schemas::system_information::SystemInformation;
+use II_proj_rest_server::db::constants::{DB_DATA_DIR, METADATA_FILE_PATH, MAX_DB_WORKERS, FOR_TESTS_DO_LONG_QUERY_EXECUTION, FOR_TESTS_QUERY_EXECUTION_TIME};
 use actix_web::{App, HttpServer, web};
 use II_proj_rest_server::db::manager::messages::{DbClientMsg, DbCmd, ResMsg};
 use II_proj_rest_server::db::db_client::DbClient;
@@ -14,7 +13,7 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use uuid::Uuid;
 use env_logger::Builder;
 use log::LevelFilter;
-
+use log::{warn};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()>
@@ -24,6 +23,17 @@ async fn main() -> std::io::Result<()>
         .filter_level(LevelFilter::Debug)
         .format_timestamp_millis()
         .init();
+
+    if FOR_TESTS_DO_LONG_QUERY_EXECUTION
+    {
+        warn!("#################################################");
+        warn!("########## RUNNING SERVER IN TEST MODE ##########");
+        warn!("QUERY EXECUTION TIME IS SET TO TAKE ADDITIONAL {}s", FOR_TESTS_QUERY_EXECUTION_TIME);
+        warn!("--> If you don't want that in constant.rs set variable: 'FOR_TESTS_DO_LONG_QUERY_EXECUTION' to false");
+        warn!("#################################################");
+        warn!("#################################################");
+        tokio::time::sleep(tokio::time::Duration::from_secs(FOR_TESTS_QUERY_EXECUTION_TIME)).await;
+    }
 
     // STREAMING large amounts of data Actix:
     // https://github.com/actix/actix-web/issues/1653

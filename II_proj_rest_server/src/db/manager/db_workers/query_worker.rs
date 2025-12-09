@@ -1,19 +1,18 @@
 use std::collections::{HashMap, HashSet};
 use std::usize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, SeekFrom, AsyncSeekExt};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::db::constants::{BATCH_SIZE, CSV_DELIM, COPY_QUERY_NAME, SELECT_QUERY_NAME};
+use crate::db::constants::{BATCH_SIZE, CSV_DELIM, COPY_QUERY_NAME, 
+FOR_TESTS_DO_LONG_QUERY_EXECUTION, FOR_TESTS_QUERY_EXECUTION_TIME};
 use crate::db::errors::DbError;
 use crate::db::manager::messages::{BaseQueryDataInfo, CopyQData, DbCmd, DbWorkerMsg, QueryCompletionMsg, QueryData, QueryFailureMsg, SelectQData, WorkerMsgRes}; 
 use crate::db::storage::metadata::{ColDataWrapper, TableMetadata};
 use crate::schemas::column::{DataColumn, Int64Column, VarcharColumn};
 use crate::schemas::query::{CopyQuery, QueryResult, QueryTableName};
-use crate::schemas::error::{Error, MultipleProblemsError, Problem};
-use crate::schemas::table;
+use crate::schemas::error::{MultipleProblemsError};
 use uuid::Uuid;
 
-use log::{info, warn, debug, error};
+use log::{warn, debug};
 
 pub struct QueryWorker
 {
@@ -42,6 +41,12 @@ impl QueryWorker
                 DbWorkerMsg::ExecQuery(worker_id, q_data) => {
                     if worker_id == self.id
                     {
+                        // simulating long query execution
+                        if FOR_TESTS_DO_LONG_QUERY_EXECUTION
+                        {
+                            warn!("TEST MODE ENABLED: QueryWorker sleeps for {}s before executing query", FOR_TESTS_QUERY_EXECUTION_TIME);
+                            tokio::time::sleep(tokio::time::Duration::from_secs(FOR_TESTS_QUERY_EXECUTION_TIME)).await;
+                        }
                         self.execute_query(q_data).await;
                     }
                     else // worker_id != self.id
@@ -77,13 +82,13 @@ impl QueryWorker
         match q_data
         {
             QueryData::SelectQ(s_q) => {
-                println!("Worker '{}' got SELECT QUERY: {:?}", worker_id, s_q);
+                debug!("Worker '{}' got SELECT QUERY: {:?}", worker_id, s_q);
 
                 let res_msg = QueryWorker::handle_select(worker_id, s_q).await;
                 self.send_msg_to_db(res_msg);
             },
             QueryData::CopyQ(c_q) => {
-                println!("Worker '{}' got COPY QUERY: {:?}", worker_id, c_q);
+                debug!("Worker '{}' got COPY QUERY: {:?}", worker_id, c_q);
 
                 let query_id = c_q.query_id();
                 let table_id = c_q.table_id();
@@ -178,6 +183,7 @@ impl QueryWorker
         csv_rdr: &mut csv_async::AsyncReader<tokio::fs::File>
     ) -> Result<(Vec<(String, u16)>, i32), DbError>
     {
+        // TODO: rework this function, its too big and convoluted
         // col_data_vec needed for saving BATCH chunks of data to our file 
         // format
         let dest_cols = query_data.dest_columns();
@@ -263,13 +269,20 @@ impl QueryWorker
                     )?;
                 }
             }
-
+            println!("row_count after push batches: {}", row_count);
             if row_count as usize % BATCH_SIZE == 0
             {
                 QueryWorker::save_batches_to_files(
                     &batches, 
                     &mut col_data_vec
                 ).await?;
+
+                // we need to remember to clear our batch vectors, since otherwise we will save many times the same data and eventually get error when we exceed BATCH_SIZE
+                for batch in &mut batches
+                {
+                    batch.clear_batch();
+                }
+
             }
         }
 

@@ -829,15 +829,12 @@ impl TableMetadata {
         let mut presence_count: usize = 0;
         for col_meta in &self.columns
         {
-            println!("col_name: {}", col_meta.c_name);
             if col_meta.column_files_present()
             {
                 presence_count += 1;
             }
-            println!("presence count: {}", presence_count);
         }
 
-        println!("columns len: {}", self.columns.len());
         if presence_count != 0 && presence_count != self.columns.len()
         {
             return Err(DbError::InternalDbError(

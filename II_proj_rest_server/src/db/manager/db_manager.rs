@@ -85,7 +85,6 @@ impl DbManager
 
     pub fn get_tables(&self) -> Vec<ShallowTable>
     {
-        info!("Getting all tables");
         return self.db_meta.get_tables();
     }
 
@@ -94,7 +93,6 @@ impl DbManager
         table_id: &Uuid
     ) -> Result<TableSchema, DbError>
     {
-        info!("Getting DETAILS for table: {}", table_id);
         return self.db_meta.get_table_details(table_id);
     }
 
@@ -110,7 +108,7 @@ impl DbManager
         table_id: &Uuid
     ) -> Result<TableMetadata, DbError>
     {
-        info!("DELETING table: {}", table_id);
+        info!("DELETING table from metadata: {}", table_id);
         self.db_meta.delete_table(table_id)
     }
 
@@ -129,7 +127,7 @@ impl DbManager
                     // No queries running on table, so we can 
                     // schedule table deletion by Maintenance worker
                     Ok(t_meta) => {
-                        debug!("DbTask::DeleteTable scheduling deletion of table: {}", table_id);
+                        debug!("DbManager::delete_table scheduling deletion of table: {}", table_id);
 
                         self.save_metadata_if_enough_changes()?;
                         return self.schedule_table_deletion(t_meta);
@@ -138,7 +136,7 @@ impl DbManager
                     // there are some queries running on it, BUT it will be
                     // deleted in near future
                     Err(e) => {
-                        debug!("DbTask::DeleteTable - couldnt delete table files yet: {}", e);
+                        debug!("DbManager::delete_table - couldnt delete table files yet: {}", e);
                         return Ok(());
                     }
                 }
@@ -151,8 +149,6 @@ impl DbManager
         schema: &TableSchema
     ) -> Result<Uuid, DbError> 
     {
-        info!("Putting new table: {}", schema.name());
-
         let db_meta = &mut self.db_meta;
         let table_id = db_meta.put_table(schema)?;
 
@@ -167,8 +163,6 @@ impl DbManager
 
     pub fn get_queries(&self) -> Result<Vec<ShallowQuery>, DbError>
     {
-        info!("Getting All queries:");
-
         Ok(self.query_store
             .queries()
             .iter()
@@ -178,7 +172,6 @@ impl DbManager
 
     pub fn get_query_details(&self, query_id: &Uuid) -> Result<Query, DbError>
     {
-        info!("Getting DETAILS for query: {}", query_id);
 
         if let Some(q) = self.query_store.queries().get(query_id)
         {
@@ -190,7 +183,6 @@ impl DbManager
 
     pub fn post_query(&mut self, query: AllowedQuery) -> Result<Uuid, DbError>
     {
-        info!("POST query");
         let db_meta = &mut self.db_meta;
 
         // Function checks if query is for table that exists 
@@ -236,7 +228,6 @@ impl DbManager
         do_flush: bool
     ) -> Result<QueryResult, DbError>
     {
-        info!("Getting RESULT for query: '{}', with row_limit: '{}', do_flush: {}", query_id, row_limit, do_flush);
         let q_res = self.query_store.get_query_result(query_id)?;
         let limited_query_res = q_res.get_n_rows(row_limit)?;
 
@@ -253,7 +244,6 @@ impl DbManager
         query_id: &Uuid, 
     ) -> Result<MultipleProblemsError, DbError>
     {
-        info!("Getting FAILURE for query: {}", query_id);
         self.query_store.get_query_failure(query_id)
     }
 
@@ -263,6 +253,8 @@ impl DbManager
         q_msg: QueryCompletionMsg
     ) -> Result<(), DbError>
     {
+        debug!("DbManager::handle_completed_query: worker: {} completed query: {}", worker_id, q_msg.query_id());
+
         self.free_db_worker(worker_id)?;
 
         let db_meta = &mut self.db_meta;
@@ -275,6 +267,8 @@ impl DbManager
         )?;
 
         let is_copy = self.query_store.check_if_query_is_copy(&q_msg.query_id())?;
+
+        debug!("Is this query copy: {}", is_copy);
 
         db_meta.lift_copy_lock_from_table(&q_msg.table_id(), is_copy)?;
         self.query_store.update_query_status(

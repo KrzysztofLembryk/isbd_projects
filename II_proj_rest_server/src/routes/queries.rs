@@ -5,6 +5,7 @@ use crate::schemas::query::{ExecuteQueryRequest};
 use crate::schemas::error::{Error};
 use actix_web::{HttpResponse, Responder, get, post, web};
 use uuid::Uuid;
+use log::{info, warn, debug, error};
 
 // TODO: remove code duplication by introducing helper functions/macro
 #[get("/queries")]
@@ -12,7 +13,7 @@ async fn get_queries(
     db_client: web::Data<tokio::sync::RwLock<DbClient>>
 ) -> impl Responder
 {
-    println!("Fetching all QUERIES");
+    info!("Fetching all QUERIES");
 
     let conn_id = Uuid::new_v4();
     let mut rx_conn = execute_db_command(
@@ -49,7 +50,7 @@ async fn get_query_info(
     db_client: web::Data<tokio::sync::RwLock<DbClient>>
 ) -> impl Responder
 {
-    println!("Fetching query with id: {}", query_id);
+    info!("Fetching query with id: {}", query_id);
 
     let conn_id = Uuid::new_v4();
     let mut rx_conn = execute_db_command(
@@ -86,6 +87,7 @@ async fn post_query(
     db_client: web::Data<tokio::sync::RwLock<DbClient>>
 ) -> impl Responder
 {
+    info!("POST query");
     let conn_id = Uuid::new_v4();
 
     let mut rx_conn = execute_db_command(

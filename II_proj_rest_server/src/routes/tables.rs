@@ -8,6 +8,7 @@ use crate::routes::execute_db_cmd::execute_db_command;
 use actix_web::{HttpResponse, Responder, delete, get, put, web};
 use uuid::Uuid;
 use validator::Validate;
+use log::{info, warn, debug, error};
 
 // TODO: remove code duplication by introducing helper functions/macro
 
@@ -16,7 +17,7 @@ async fn get_tables(
     db_client: web::Data<tokio::sync::RwLock<DbClient>>
 ) -> impl Responder
 {
-    println!("Fetching ALL TABLES DETAILS");
+    info!("Fetching ALL TABLES DETAILS");
 
     let conn_id = Uuid::new_v4();
     let mut rx_conn = execute_db_command(
@@ -49,7 +50,7 @@ async fn get_table_details(
     db_client: web::Data<tokio::sync::RwLock<DbClient>>
 ) -> impl Responder
 {
-    println!("Fetching DETAILS for table with id: {}", table_id);
+    info!("Fetching DETAILS for table with id: {}", table_id);
 
     let conn_id = Uuid::new_v4();
     let mut rx_conn = execute_db_command(
@@ -85,7 +86,7 @@ async fn delete_table(
     db_client: web::Data<tokio::sync::RwLock<DbClient>>,
 ) -> impl Responder
 {
-    println!("Deleting table with id: {}", table_id);
+    info!("Deleting table with id: {}", table_id);
 
     let conn_id = Uuid::new_v4();
     let mut rx_conn = execute_db_command(
@@ -119,7 +120,7 @@ async fn put_table(
     db_client: web::Data<tokio::sync::RwLock<DbClient>>,
 ) -> impl Responder
 {
-    println!("Putting new table");
+    info!("Putting new table: '{}'", table_schema.name());
     if let Err(validation_err) = table_schema.validate()
     {
         return HttpResponse::BadRequest().json(Error::new(&format!("Table schema didnt pass validation: {}", validation_err)));
