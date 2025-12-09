@@ -169,9 +169,6 @@ impl QueryWorker
 
         let (final_col_file_ids, row_count) = QueryWorker::load_csv_data(query_data, table_meta, &mut csv_rdr).await?;
 
-        // TODO: add flag that given table has copy operation, and if it still
-        // has this operation, we will move another copy to the end of queue
-
         return Ok((final_col_file_ids, row_count));
     }
 
@@ -204,30 +201,66 @@ impl QueryWorker
                 }
             };
 
-            let vals_vec: Vec<&str> = record.iter().collect();
+            let csv_vals_vec: Vec<&str> = record.iter().collect();
 
             match dest_cols
             {
                 None => {
-                    if vals_vec.len() != batches.len()
+                    if csv_vals_vec.len() != batches.len()
                     {
                         return Err(
                             DbError::CsvError(
                                 format!(
-                                    "We read a row from csv (no dest_cols set) that has different nbr of columns ({}) than our table schema ({})", vals_vec.len(), batches.len()
+                                    "We read a row from csv (no dest_cols set) that has different nbr of columns ({}) than our table schema ({})", csv_vals_vec.len(), batches.len()
                                 )
                             )
                         )
                     }
                     QueryWorker::push_values_to_batches(
-                        &vals_vec,
+                        &csv_vals_vec,
                         &mut batches,
                         row_count,
                         table_meta.table_name()
                     )?;
                 },
-                Some(_dest_cols) => {
-                    panic!("dest cols case not impl")
+                Some(dest_cols) => {
+                    if csv_vals_vec.len() < batches.len()
+                    {
+                        return Err(
+                            DbError::CsvError(
+                                format!(
+                                    "We read a row from csv (dest_cols set) that has less columns ({}) than our table schema ({})", csv_vals_vec.len(), batches.len()
+                                )
+                            )
+                        )
+                    }
+                    if csv_vals_vec.len() != dest_cols.len()
+                    {
+                        return Err(
+                            DbError::CsvError(
+                                format!(
+                                    "We read a row from csv (dest_cols set) that has different nbr of columns ({}) than our dest cols ({})", csv_vals_vec.len(), dest_cols.len()
+                                )
+                            )
+                        )
+                    }
+
+                    // Since we have dest_cols, we will do mapping so that at
+                    // 0 position of mapped_csv_vals we have a value for column
+                    // that is also at 0 position in our table
+                    let mapped_csv_vals = QueryWorker::map_csv_row_to_table_order(
+                        dest_cols, 
+                        col_data_vec.len(), 
+                        &table_meta.get_column_name_to_index_map(),
+                        &csv_vals_vec
+                    )?;
+
+                    QueryWorker::push_values_to_batches(
+                        &mapped_csv_vals,
+                        &mut batches,
+                        row_count,
+                        table_meta.table_name()
+                    )?;
                 }
             }
 
@@ -324,6 +357,35 @@ impl QueryWorker
             }
         }
         return Ok(());
+    }
+
+    fn map_csv_row_to_table_order<'a>(
+        dest_cols: &Vec<String>,
+        n_table_cols: usize,
+        col_name_to_idx_map: &HashMap<String, usize>,
+        csv_row: &Vec<&'a str>
+    ) -> Result<Vec<&'a str>, DbError>
+    {
+        // dest_cols might have greater length than nbr of table columns
+        // but we will take only first columns().len values
+        if csv_row.len() != dest_cols.len() || dest_cols.len() < n_table_cols
+        {
+            return Err(DbError::InternalDbError(
+                format!("QueryWorker::map_csv_row_to_table_order - csv_row.len != dest_cols.len or dest_cols < n_table_cols - at this point this should never happen since these things should've been checked earlier - DB in corrupted state")
+            ));
+        }
+
+        let mut res_vec: Vec<&str> = vec![""; n_table_cols];
+        let csv_row = &csv_row[..n_table_cols];
+        for (idx, csv_val) in csv_row.iter().enumerate()
+        {
+            let dest_name = dest_cols.get(idx).unwrap();
+            let name_idx = col_name_to_idx_map.get(dest_name).unwrap();
+
+            *res_vec.get_mut(*name_idx).unwrap() = *csv_val;
+        }
+
+        return Ok(res_vec);
     }
 
     fn push_values_to_batches(
@@ -446,9 +508,6 @@ impl QueryWorker
                 }
             };
 
-            // If we have mapping we don't need to check anything, since there
-            // might be i.e. less columns and one column will be mapped to many
-            // columns
             match query_data.dest_columns()
             {
                 None => {
@@ -500,7 +559,11 @@ impl QueryWorker
                     let columns = table_meta.columns();
                     // If there are destination columns, we expect to have at 
                     // least as many columns in csv as in our db schema. 
-                    // Because otherwise mapping cannot be done
+                    // Because otherwise mapping cannot be done since we do not
+                    // allow NULL values, also dest_cols and header must have 
+                    // the same length.
+                    // IF headers.len > columns.len we will use only columns.len
+                    // from dest_cols
                     if headers.len() < columns.len() 
                     || headers.len() != dest_cols.len()
                     {
@@ -572,16 +635,15 @@ impl QueryWorker
                 }
             }
 
-            // We probably should allow mapping one csv column to many our cols
-            // // Check for duplicate column names in destination columns
-            // let mut seen_cols = std::collections::HashSet::new();
-            // for col_name in dest_columns {
-            //     if !seen_cols.insert(col_name) {
-            //         return Err(DbError::Other(
-            //             format!("Duplicate column name '{}' in destinationColumns for table: '{}'", col_name, table_meta.table_name())
-            //         ));
-            //     }
-            // }
+            // Check for duplicate column names in destination columns
+            let mut seen_cols = std::collections::HashSet::new();
+            for col_name in dest_columns {
+                if !seen_cols.insert(col_name) {
+                    return Err(DbError::Other(
+                        format!("Duplicate column name '{}' in destinationColumns for table: '{}'", col_name, table_meta.table_name())
+                    ));
+                }
+            }
 
         }
         return Ok(());
