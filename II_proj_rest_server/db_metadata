@@ -1,1 +1,1 @@
-{"table_count":1,"tables_metadata":{"f0652708-9ca9-4d6f-bf34-a52274d1ad16":{"table_name":"table_1","table_id":"f0652708-9ca9-4d6f-bf34-a52274d1ad16","columns":[{"c_name":"id","c_type":"INT64","c_files":[]},{"c_name":"username","c_type":"VARCHAR","c_files":[]},{"c_name":"age","c_type":"INT64","c_files":[]}],"table_dir_path":"./db_data/f0652708-9ca9-4d6f-bf34-a52274d1ad16_table_1"}},"db_data_dir_path":"./db_data"}
+{"table_count":0,"tables_metadata":{},"db_data_dir_path":"./db_data"}

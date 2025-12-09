@@ -1,5 +1,6 @@
 use serde;
 use std::fmt;
+use uuid::Uuid;
 
 const MB_1: usize = 1024 * 1024;
 
@@ -44,6 +45,11 @@ pub const MAX_DB_WORKERS: usize = 10;
 // ############################################################################
 pub const ZSTD_ENCODE_LEVEL: i32 = 3;
 pub const MAGIC_WORD: u32 = 0xF1FAA;
+
+pub const MAINTENANCE_SAVE_META_TABLE_ID: Uuid = Uuid::from_u128(0xFFFFFFFF_FFFF_FFFF_FFFF_FFFFFFFFFFFF);
+pub const MAINTENANCE_WORKER_QUERY_ID: Uuid = Uuid::from_u128(0xFFFFFFFF_FFFF_FFFF_FFFF_FFFFFFFFFFFF);
+pub const MAINTENANCE_WORKER_ID: usize = 0;
+
 
 use crate::db::errors::DbError;
 

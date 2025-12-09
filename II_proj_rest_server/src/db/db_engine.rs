@@ -74,7 +74,7 @@ impl DbEngine
                             }
                         },
                         None => {
-                            warn!("Db task - all tx channels were closed, db rx channel returnen None");
+                            error!("Db task - all tx channels were closed, db rx channel returnen None");
                             db_manager.shutdown().await.unwrap();
                             break;
                         }
@@ -112,7 +112,6 @@ fn send_result_to_client(
     db_manager: &mut DbManager
 )
 {
-    debug!("Db sending result to client: {}", conn_id);
     // TODO: Add erorr handling here
     db_manager.send_result(
         conn_id, 
@@ -172,7 +171,6 @@ fn handle_client_cmd(
             db_manager.register(&id, tx);
         },
         DbClientMsg::GetTables(conn_id) => {
-            debug!("DbTask::GetTables conn_id: {}", conn_id);
             let res = db_manager.get_tables();
 
             send_result_to_client(
@@ -182,7 +180,6 @@ fn handle_client_cmd(
             );
         },
         DbClientMsg::GetTableDetails(conn_id, table_id) => {
-            debug!("DbTask::GetTableDetails conn_id: {}, table_id: {}", conn_id, table_id);
             let res = db_manager.get_table_details(&table_id);
 
             send_result_to_client(
@@ -192,7 +189,6 @@ fn handle_client_cmd(
             );
         },
         DbClientMsg::DeleteTable(conn_id, table_id) => {
-            debug!("DbTask::DeleteTable conn_id: {}, table_id: {}", conn_id, table_id);
             let res = db_manager.mark_table_to_delete(&table_id);
 
             match db_manager.delete_table(&table_id)

@@ -216,6 +216,7 @@ impl DbMetadata {
             let t_meta = self.tables_metadata.remove(table_id).unwrap();
             self.tables_states.remove(table_id);
             self.table_name_to_id_map.remove(t_meta.table_name());
+            self.table_count -= 1;
 
             return Ok(t_meta);
         }

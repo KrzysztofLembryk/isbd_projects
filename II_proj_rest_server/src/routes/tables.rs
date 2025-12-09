@@ -1,13 +1,13 @@
 use crate::db::db_client::DbClient;
 use crate::db::storage::metadata::TableId;
-use crate::schemas::table::{TableSchema};
+use crate::schemas::table::{self, TableSchema};
 use crate::schemas::error::{Error};
 use crate::db::manager::messages::{DbClientMsg, ResMsg};
 use crate::routes::execute_db_cmd::execute_db_command;
 
 use actix_web::{HttpResponse, Responder, delete, get, put, web};
 use uuid::Uuid;
-use tokio::time::{sleep, Duration};
+use validator::Validate;
 
 // TODO: remove code duplication by introducing helper functions/macro
 
@@ -25,8 +25,6 @@ async fn get_tables(
         DbClientMsg::GetTables(conn_id)
     ).await;
 
-    // Simulate long await for data
-    sleep(Duration::from_secs(5)).await;
     let res = rx_conn.recv().await;
 
     return match res
@@ -122,6 +120,10 @@ async fn put_table(
 ) -> impl Responder
 {
     println!("Putting new table");
+    if let Err(validation_err) = table_schema.validate()
+    {
+        return HttpResponse::BadRequest().json(Error::new(&format!("Table schema didnt pass validation: {}", validation_err)));
+    }
 
     let conn_id = Uuid::new_v4();
     let mut rx_conn = execute_db_command(
@@ -143,7 +145,7 @@ async fn put_table(
                     HttpResponse::BadRequest()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
-                        .json("get_tables: got Wrong message from db"),
+                        .json(Error::new("get_tables: got Wrong message from db")),
             }
         },
         None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")

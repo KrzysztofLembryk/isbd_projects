@@ -85,6 +85,7 @@ impl DbManager
 
     pub fn get_tables(&self) -> Vec<ShallowTable>
     {
+        info!("Getting all tables");
         return self.db_meta.get_tables();
     }
 
@@ -93,6 +94,7 @@ impl DbManager
         table_id: &Uuid
     ) -> Result<TableSchema, DbError>
     {
+        info!("Getting DETAILS for table: {}", table_id);
         return self.db_meta.get_table_details(table_id);
     }
 
@@ -107,6 +109,7 @@ impl DbManager
         table_id: &Uuid
     ) -> Result<TableMetadata, DbError>
     {
+        info!("DELETING table: {}", table_id);
         self.db_meta.delete_table(table_id)
     }
 
@@ -115,6 +118,8 @@ impl DbManager
         schema: &TableSchema
     ) -> Result<Uuid, DbError> 
     {
+        info!("Putting new table: {}", schema.name());
+
         let db_meta = &mut self.db_meta;
         let table_id = db_meta.put_table(schema)?;
 
@@ -137,7 +142,8 @@ impl DbManager
 
     pub fn get_queries(&self) -> Result<Vec<ShallowQuery>, DbError>
     {
-        // TODO: We should also check if db is initialized here
+        info!("Getting All queries:");
+
         Ok(self.query_store
             .queries()
             .iter()
@@ -147,15 +153,19 @@ impl DbManager
 
     pub fn get_query_details(&self, query_id: &Uuid) -> Result<Query, DbError>
     {
+        info!("Getting DETAILS for query: {}", query_id);
+
         if let Some(q) = self.query_store.queries().get(query_id)
         {
             return Ok(q.clone());
         }
+        info!("Details for query: '{}' NOT FOUND", query_id);
         Err(DbError::NotFound(format!("Query with id: {}, not found in db.", query_id)))
     }
 
     pub fn post_query(&mut self, query: AllowedQuery) -> Result<Uuid, DbError>
     {
+        info!("POST query");
         let db_meta = &mut self.db_meta;
 
         // Function checks if query is for table that exists 
@@ -201,6 +211,7 @@ impl DbManager
         do_flush: bool
     ) -> Result<QueryResult, DbError>
     {
+        info!("Getting RESULT for query: '{}', with row_limit: '{}', do_flush: {}", query_id, row_limit, do_flush);
         let q_res = self.query_store.get_query_result(query_id)?;
         let limited_query_res = q_res.get_n_rows(row_limit)?;
 
@@ -217,6 +228,7 @@ impl DbManager
         query_id: &Uuid, 
     ) -> Result<MultipleProblemsError, DbError>
     {
+        info!("Getting FAILURE for query: {}", query_id);
         self.query_store.get_query_failure(query_id)
     }
 
@@ -428,13 +440,11 @@ impl DbManager
         tx: UnboundedSender<ResMsg>
     )
     {
-        debug!("DbTask::register id: {}", connection_id);
         self.tx_server_channels.insert(connection_id.clone(), tx);
     }
 
     pub fn unregister(&mut self, connection_id: &Uuid)
     {
-        debug!("DbTask::unregister id: {}", connection_id);
         self.tx_server_channels.remove(connection_id);
     }
 
@@ -470,7 +480,7 @@ impl DbManager
     // ########################################################################
     
     pub fn schedule_table_deletion(
-        &self, 
+        &mut self, 
         t_meta: TableMetadata
     ) -> Result<(), DbError> 
     {

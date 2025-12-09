@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use crate::db::constants::{MAINTENANCE_WORKER_ID, MAINTENANCE_WORKER_QUERY_ID};
 use crate::db::errors::DbError;
 use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, DbWorkerMsg, QueryData};
 use crate::db::manager::db_workers::maintenance_worker::MaintenanceWorker;
@@ -23,31 +24,30 @@ impl WorkersManager
         tx_to_db: UnboundedSender<DbCmd>
     ) -> WorkersManager
     {
-        debug!("WorkersManager - Maintenansce worker spawn");
-        let maintenance_worker = MaintenanceWorker::spawn(db_data_dir_path);
-        debug!("WorkersManager - Maintenansce worker AFTER spawn");
+        debug!("Maintenance Worker '{}' spawned", MAINTENANCE_WORKER_ID);
+        let maintenance_worker = MaintenanceWorker::spawn(
+            MAINTENANCE_WORKER_ID,
+            db_data_dir_path, 
+            tx_to_db.clone()
+        );
         let mut query_workers: HashMap<usize, QueryWorkerHandler> = HashMap::new();
         let mut available_workers: HashSet<usize> = HashSet::new();
 
-        for worker_id in 0..n_workers
+        for worker_id in 1..=n_workers
         {
-
-            debug!("WorkersManager - channels for worker {}", worker_id);
             let (tx_to_worker, rx) = unbounded_channel::<DbWorkerMsg>();
 
-            debug!("WorkersManager - worker new");
             let mut boxed_query_worker = Box::new(QueryWorker::new(
                 worker_id, 
                 tx_to_db.clone(), 
                 rx
             ));
 
-            debug!("WorkersManager - tokio spawn");
             let handle = tokio::spawn(async move {
                 boxed_query_worker.run().await
             });
+            debug!("DbWorker '{}' spawned", worker_id);
 
-            debug!("WorkersManager - worker handler");
             let worker_handler = QueryWorkerHandler::new(worker_id, tx_to_worker, handle);
 
             available_workers.insert(worker_id);
