@@ -61,7 +61,8 @@ impl DbMetadata {
         table_map: HashMap<TableId, TableMetadata>,
         metadata_file_path: &str,
         data_dir_path: &str,
-    ) -> Result<DbMetadata, DbError> {
+    ) -> Result<DbMetadata, DbError> 
+    {
         // TODO: add better checking if path is correct
         is_metadata_ok(table_count, &table_map, metadata_file_path, data_dir_path)?;
 
@@ -241,6 +242,7 @@ impl DbMetadata {
             let t_meta = self.tables_metadata.remove(table_id).unwrap();
             self.tables_states.remove(table_id);
             self.table_name_to_id_map.remove(t_meta.table_name());
+            self.nbr_of_metadata_changes += 1;
             self.table_count -= 1;
 
             return Ok(t_meta);
@@ -323,7 +325,7 @@ impl DbMetadata {
     /// Checks if there exists table that this query is for.
     /// If table exists, it checks if table is marked to be deleted
     /// Returns OK if table exists and is not marked to be deleted
-    pub fn authorize_query(&self, query: &impl QueryTableName) -> Result<(), DbError> {
+    fn authorize_query(&self, query: &impl QueryTableName) -> Result<(), DbError> {
         let table_name = query.table_name();
 
         if let Some(table_id) = self.table_name_to_id_map.get(table_name) {
@@ -373,7 +375,8 @@ impl DbMetadata {
         // TODO: add enum here
         table_id: Option<&Uuid>,
         table_name: Option<&str>,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), DbError> 
+    {
         if let Some(table_id) = table_id {
             return self.do_queries_decrease(table_id);
         }
@@ -397,6 +400,40 @@ impl DbMetadata {
         return Err(DbError::Other(format!(
             "DbMetadata::decrease_nbr_of_queries_operating: both table_name and table_id are None"
         )));
+    }
+
+    pub fn can_table_be_deleted(&self, table_id: &Uuid) -> Result<bool, DbError>
+    {
+        let t_state = match self.tables_states.get(table_id) {
+            Some(s) => s,
+            None => {
+                return Err(DbError::InternalDbError(
+                    format!("DbMetadata::can_table_be_deletd: table_id not found, this means query was operating on non existent table, DB IN CORRUPTED STATE") 
+                ));
+            }
+        };
+
+        if t_state.is_table_scheduled_for_deletion() 
+        && t_state.nbr_of_queries_operating_on_table() == 0
+        {
+            return Ok(true);
+        }
+
+        return Ok(false);
+    }
+
+    pub fn get_table_metadata(
+        &self, 
+        table_id: &Uuid
+    ) -> Result<&TableMetadata, DbError>
+    {
+        if let Some(t_meta) = self.tables_metadata.get(table_id)
+        {
+            return Ok(t_meta);
+        }
+        return Err(DbError::InternalDbError(
+            format!("DbMetadata::get_table_metadata: table with id: '{}' does not exist in db - DB IN CORRUPTED STATE, this func should be invoked only for tables that exist", table_id)
+        ));
     }
 
     pub fn lift_copy_lock_from_table(
@@ -468,7 +505,8 @@ impl DbMetadata {
         &mut self,
         table_id: &Uuid,
         latest_columns_file_ids: Vec<(String, u16)>,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), DbError> 
+    {
         let table_meta = match self.tables_metadata.get_mut(table_id) {
             Some(val) => val,
             None => {
@@ -515,6 +553,8 @@ impl DbMetadata {
                 ));
             }
         }
+
+        self.nbr_of_metadata_changes += 1;
 
         return Ok(());
     }
@@ -719,7 +759,8 @@ impl TableState {
         }
     }
 
-    fn new_map(tables_metadata: &HashMap<TableId, TableMetadata>) -> HashMap<TableId, TableState> {
+    fn new_map(tables_metadata: &HashMap<TableId, TableMetadata>) -> HashMap<TableId, TableState> 
+    {
         let mut tables_state: HashMap<TableId, TableState> = HashMap::new();
         for (table_id, _) in tables_metadata {
             tables_state.insert(
@@ -732,6 +773,16 @@ impl TableState {
             );
         }
         tables_state
+    }
+
+    fn is_table_scheduled_for_deletion(&self) -> bool
+    {
+        self.delete_flag == DeleteFlag::DoDelete 
+    }
+
+    fn nbr_of_queries_operating_on_table(&self) -> u16
+    {
+        self.n_queries_operating_on_table
     }
 }
 

@@ -105,13 +105,45 @@ impl DbManager
         self.db_meta.mark_table_for_deletion(table_id)
     }
 
-    pub fn delete_table(
+    fn delete_table_from_metadata(
         &mut self,
         table_id: &Uuid
     ) -> Result<TableMetadata, DbError>
     {
         info!("DELETING table: {}", table_id);
         self.db_meta.delete_table(table_id)
+    }
+
+    pub fn delete_table(&mut self, table_id: &Uuid) -> Result<(), DbError>
+    {
+        match self.mark_table_to_delete(&table_id)
+        {
+            // We couldnt mark table for deletion, it doesnt exist in our db
+            // or already is marked
+            Err(e) => {
+                return Err(e);
+            },
+            Ok(_) => {
+                match self.delete_table_from_metadata(&table_id)
+                {
+                    // No queries running on table, so we can 
+                    // schedule table deletion by Maintenance worker
+                    Ok(t_meta) => {
+                        debug!("DbTask::DeleteTable scheduling deletion of table: {}", table_id);
+
+                        self.save_metadata_if_enough_changes()?;
+                        return self.schedule_table_deletion(t_meta);
+                    },
+                    // This means we cannot yet delete table, since
+                    // there are some queries running on it, BUT it will be
+                    // deleted in near future
+                    Err(e) => {
+                        debug!("DbTask::DeleteTable - couldnt delete table files yet: {}", e);
+                        return Ok(());
+                    }
+                }
+            },
+        }
     }
 
     pub fn put_table(
@@ -124,15 +156,7 @@ impl DbManager
         let db_meta = &mut self.db_meta;
         let table_id = db_meta.put_table(schema)?;
 
-        if db_meta.is_enough_changes()
-        {
-            let db_meta_clone = db_meta.clone();
-
-            db_meta.reset_changes();
-            self.workers_manager.notify_maintenance_worker(
-                DbMaintenanceMsg::SaveMetadata(db_meta_clone)
-            )?;
-        }
+        self.save_metadata_if_enough_changes()?;
 
         Ok(table_id)
     }
@@ -242,23 +266,35 @@ impl DbManager
         self.free_db_worker(worker_id)?;
 
         let db_meta = &mut self.db_meta;
+        let table_id = &q_msg.table_id();
 
         // If everything works as intended this should never return error
         db_meta.decrease_nbr_of_queries_operating_on_table(
-            Some(&q_msg.table_id()), 
+            Some(table_id), 
             None
         )?;
-        // if we got copy query this will lift the lock
-        let is_copy = self.query_store
-            .check_if_query_is_copy(&q_msg.query_id())?;
+
+        let is_copy = self.query_store.check_if_query_is_copy(&q_msg.query_id())?;
+
         db_meta.lift_copy_lock_from_table(&q_msg.table_id(), is_copy)?;
-
-        // TODO: here we should check if table has DoDelete flag and if there are no queries operating on it
-
         self.query_store.update_query_status(
             &q_msg.query_id(), 
             QueryStatus::COMPLETED
         )?;
+
+        if db_meta.can_table_be_deleted(table_id)?
+        {
+            let table_meta = db_meta.get_table_metadata(table_id)?;
+            let table_meta = table_meta.clone();
+
+            db_meta.delete_table(table_id)?;
+            self.save_metadata_if_enough_changes()?;
+
+            self.workers_manager.notify_maintenance_worker(
+                        DbMaintenanceMsg::DeleteTable(table_meta)
+                    )?;
+        }
+
         self.store_completed_query(q_msg)?;
         self.execute_next_query()?;
 
@@ -275,6 +311,7 @@ impl DbManager
         self.free_db_worker(worker_id)?;
 
         let db_meta = &mut self.db_meta;
+        let table_id = &q_msg.table_id();
 
         db_meta.decrease_nbr_of_queries_operating_on_table(
             Some(&q_msg.table_id()),
@@ -289,6 +326,19 @@ impl DbManager
             &q_msg.query_id(), 
             QueryStatus::FAILED
         )?;
+
+        if db_meta.can_table_be_deleted(table_id)?
+        {
+            let table_meta = db_meta.get_table_metadata(table_id)?;
+            let table_meta = table_meta.clone();
+
+            db_meta.delete_table(table_id)?;
+            self.save_metadata_if_enough_changes()?;
+
+            self.workers_manager.notify_maintenance_worker(
+                        DbMaintenanceMsg::DeleteTable(table_meta)
+                    )?;
+        }
 
         self.store_failed_query(q_msg);
         self.execute_next_query()?;
@@ -434,6 +484,19 @@ impl DbManager
         self.workers_manager.free_worker(worker_id)
     }
 
+    fn save_metadata_if_enough_changes(&mut self) -> Result<(), DbError>
+    {
+        if self.db_meta.is_enough_changes()
+        {
+            let db_meta_clone = self.db_meta.clone();
+
+            self.db_meta.reset_changes();
+            return self.workers_manager.notify_maintenance_worker(
+                DbMaintenanceMsg::SaveMetadata(db_meta_clone)
+            );
+        }
+        return Ok(());
+    }
     // ########################################################################
     // ################## SERVER CONNECTIONS COMMUNICATION ####################
     // ########################################################################
@@ -482,8 +545,8 @@ impl DbManager
     // ################## DB MAINTENANCE TASK COMMUNICATION ###################
     // ########################################################################
     
-    pub fn schedule_table_deletion(
-        &mut self, 
+    fn schedule_table_deletion(
+        &self, 
         t_meta: TableMetadata
     ) -> Result<(), DbError> 
     {

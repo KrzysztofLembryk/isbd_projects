@@ -189,48 +189,12 @@ fn handle_client_cmd(
             );
         },
         DbClientMsg::DeleteTable(conn_id, table_id) => {
-            match db_manager.mark_table_to_delete(&table_id)
-            {
-                Ok(_) => {
-                    match db_manager.delete_table(&table_id)
-                    {
-                        // No queries running on table, so we can 
-                        // schedule table deletion
-                        Ok(t_meta) => {
-                            debug!("DbTask::DeleteTable scheduling deletion of table: {}", table_id);
-                            let res = db_manager
-                                        .schedule_table_deletion(t_meta);
-                            send_result_to_client(
-                                ResMsg::ResDeleteTable(res), 
-                                &conn_id, 
-                                db_manager
-                            );
-                        },
-                        // This means we cannot yet delete table, since
-                        // there are some queries running on it, BUT it will be
-                        // deleted in near future
-                        Err(e) => {
-                            error!("DbTask::DeleteTable - couldnt delete table files yet: {}", e);
-                            send_result_to_client(
-                                ResMsg::ResDeleteTable(Ok(())), 
-                                &conn_id, 
-                                db_manager
-                            );
-                        }
-                    }
-
-                },
-                // We couldnt mark table for deletion, thus it doesnt exist in 
-                // our db
-                Err(e) => {
-                    send_result_to_client(
-                        ResMsg::ResDeleteTable(Err(e)), 
-                        &conn_id, 
-                        db_manager
-                    );
-                }
-            }
-
+            let res = db_manager.delete_table(&table_id);
+            send_result_to_client(
+                ResMsg::ResDeleteTable(res), 
+                &conn_id, 
+                db_manager
+            );
         },
         DbClientMsg::PutTable(conn_id, table_schema) => {
             let res = db_manager.put_table(&table_schema);
