@@ -1,10 +1,8 @@
 use crate::db::errors::DbError;
-use crate::db::storage::col_data::ColType;
 use crate::db::storage::metadata::{DbMetadata, TableMetadata};
-use crate::schemas::column::DataColumn;
 use crate::schemas::error::MultipleProblemsError;
 use crate::schemas::table::{ShallowTable, TableSchema};
-use crate::schemas::query::{AllowedQuery, CopyQuery, Query, SelectQuery, ShallowQuery, QueryResult};
+use crate::schemas::query::{AllowedQuery, CopyQuery, Query, ShallowQuery, QueryResult};
 use uuid::Uuid;
 use tokio::sync::mpsc::{UnboundedSender};
 

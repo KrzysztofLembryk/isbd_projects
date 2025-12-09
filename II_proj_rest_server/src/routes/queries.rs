@@ -33,9 +33,6 @@ async fn get_queries(
                 ResMsg::ResQueries(Ok(queries)) => 
                     HttpResponse::Ok()
                         .json(queries),
-                ResMsg::ResQueries(Err(e)) => 
-                    HttpResponse::NotFound()
-                        .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
                         .json("get_tables: got Wrong message from db"),
             }
@@ -74,10 +71,10 @@ async fn get_query_info(
                     HttpResponse::NotFound()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
-                        .body("get_tables: got Wrong message from db"),
+                        .json("get_tables: got Wrong message from db"),
             }
         },
-        None => HttpResponse::InternalServerError().body("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
     };
 }
 
@@ -107,7 +104,7 @@ async fn post_query(
                     HttpResponse::Ok()
                         .json(id),
                 ResMsg::ResPostQuery(Err(e)) => 
-                    HttpResponse::NotFound()
+                    HttpResponse::BadRequest()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
                         .json("get_tables: got Wrong message from db"),

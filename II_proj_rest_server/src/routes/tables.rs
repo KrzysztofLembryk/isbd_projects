@@ -37,10 +37,10 @@ async fn get_tables(
                     HttpResponse::Ok()
                         .json(tables),
                 _ => HttpResponse::InternalServerError()
-                        .body("get_tables: got Wrong message from db"),
+                        .json("get_tables: got Wrong message from db"),
             }
         },
-        None => HttpResponse::InternalServerError().body("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
     };
 }
 
@@ -73,10 +73,10 @@ async fn get_table_details(
                     HttpResponse::NotFound()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
-                        .body("get_tables: got Wrong message from db"),
+                        .json("get_tables: got Wrong message from db"),
             }
         },
-        None => HttpResponse::InternalServerError().body("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
     };
 }
 
@@ -102,15 +102,15 @@ async fn delete_table(
             match msg
             {
                 ResMsg::ResDeleteTable(Ok(_)) => 
-                    HttpResponse::Ok().body("Table deleted succesfully"),
+                    HttpResponse::Ok().json("Table has been deleted successfully"),
                 ResMsg::ResDeleteTable(Err(e)) => 
-                    HttpResponse::BadRequest()
+                    HttpResponse::NotFound()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
-                        .body("get_tables: got Wrong message from db"),
+                        .json("delete_table: got Wrong message from db"),
             }
         },
-        None => HttpResponse::InternalServerError().body("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json("delete_table: db closed its side of channel, couldnt receive data from db")
     };
 }
 

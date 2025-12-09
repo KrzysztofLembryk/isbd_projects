@@ -2,7 +2,6 @@ use regex::Regex;
 use serde;
 use serde_json;
 use std::collections::{HashMap, VecDeque};
-use std::path::Path;
 use std::{vec};
 use tokio::fs as t_fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -263,13 +262,11 @@ impl DbMetadata {
     {
         let table_id = TableId::new_v4();
 
-        // TODO: add hashmap that stores table_name: table_id so that we can
-        // quickly check if table_name exists in db (since task description
-        // requires tables to have unique names)
-        if self.tables_metadata.contains_key(&table_id) {
-            return Err(DbError::Other(format!(
-                "DbMetadata::add_new_table: map contains given table_id: '{}', Uuid::new gave the same id, this shouldnt happen",
-                table_id
+        if self.table_name_to_id_map.contains_key(table_schema.name())
+        {
+            return Err(DbError::InvalidName(format!(
+                "DbMetadata::put_table: our db contains given table with given name: '{}'",
+                table_schema.name()
             )));
         }
 

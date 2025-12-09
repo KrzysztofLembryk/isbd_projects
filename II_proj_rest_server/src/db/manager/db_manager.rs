@@ -11,7 +11,7 @@ use uuid::Uuid;
 use tokio::sync::mpsc::{UnboundedSender};
 use std::io::ErrorKind as err_kind;
 use std::collections::HashMap;
-use log::{info, warn, debug, error};
+use log::{info, debug};
 
 #[cfg(test)]
 #[path = "../tests/manager/test_db_manager.rs"]
@@ -152,18 +152,17 @@ impl DbManager
     // ########################## QUERIES HANDLERS ############################
     // ########################################################################
 
-    pub fn get_queries(&self) -> Result<Vec<ShallowQuery>, DbError>
+    pub fn get_queries(&self) -> Vec<ShallowQuery>
     {
-        Ok(self.query_store
+        self.query_store
             .queries()
             .iter()
             .map(|(q_id, q_data)| ShallowQuery::new(*q_id, q_data.status()))
-            .collect())
+            .collect()
     }
 
     pub fn get_query_details(&self, query_id: &Uuid) -> Result<Query, DbError>
     {
-
         if let Some(q) = self.query_store.queries().get(query_id)
         {
             return Ok(q.clone());
@@ -244,7 +243,7 @@ impl DbManager
         q_msg: QueryCompletionMsg
     ) -> Result<(), DbError>
     {
-        debug!("DbManager::handle_completed_query: worker: {} completed query: {}", worker_id, q_msg.query_id());
+        debug!("Handling COMPLETED QUERY: worker: {} completed query: {}", worker_id, q_msg.query_id());
 
         self.free_db_worker(worker_id)?;
 
@@ -300,6 +299,8 @@ impl DbManager
         q_msg: QueryFailureMsg
     ) -> Result<(), DbError>
     {
+        debug!("Handling FAILED QUERY: '{}',\nfailure message: {:?}", q_msg.query_id(), q_msg);
+
         // We always want to free worker first
         self.free_db_worker(worker_id)?;
 
@@ -486,6 +487,7 @@ impl DbManager
     {
         if self.db_meta.is_enough_changes()
         {
+            debug!("There are enough changes to save metadat: saving...");
             let db_meta_clone = self.db_meta.clone();
 
             self.db_meta.reset_changes();

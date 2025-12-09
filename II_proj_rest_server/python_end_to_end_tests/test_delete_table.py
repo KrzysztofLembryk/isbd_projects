@@ -1,5 +1,13 @@
-from db_client import (get_table_by_id, delete_table, put_table, post_copy_query, get_query_by_id)
+#!/usr/bin/env python3
+import time
 from csv_names import (OK_EMPLOYEES_WITH_HEADER)
+from db_client import (
+    put_table, 
+    delete_table, 
+    get_table_by_id, 
+    post_copy_query, 
+    get_query_by_id
+)
 
 QUERY_STATUS_KEY = "status"
 
@@ -101,26 +109,61 @@ def test_delete_table_with_invalid_id():
     
     print("✓ TEST 3 PASSED: Invalid ID formats correctly rejected\n")
 
+def test_double_delete():
+    """
+    Test 4: Create a table, delete it successfully, then try to delete it again.
+    The second delete should fail with 404 (table not found).
+    """
+    print("\n" + "="*80)
+    print("TEST 4: Double DELETE - second delete should fail")
+    print("="*80)
+    
+    table_name = "table_for_double_delete"
+    columns = [
+        {"name": "id", "type": "INT64"},
+        {"name": "value", "type": "VARCHAR"}
+    ]
+    
+    # Step 1: Create table
+    print(f"  Step 1: Creating table '{table_name}'...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success, f"Failed to create table: {error}"
+    assert table_id is not None, "Table ID should not be None"
+    print(f"    ✓ Table created with ID: {table_id}")
+    
+    # Step 2: First delete - should succeed
+    print(f"  Step 2: First DELETE attempt...")
+    success, error = delete_table(table_id)
+    assert success, f"First delete should succeed: {error}"
+    assert error is None, f"Error should be None on successful deletion, got: {error}"
+    print(f"    ✓ First delete succeeded")
+    
+    # Step 3: Verify table no longer exists
+    print(f"  Step 3: Verifying table is deleted...")
+    success_get, schema, error_get = get_table_by_id(table_id)
+    assert not success_get, "GET should fail after table deletion"
+    assert schema is None, "Schema should be None after deletion"
+    print(f"    ✓ Table confirmed deleted")
+    
+    # Step 4: Second delete - should fail
+    print(f"  Step 4: Second DELETE attempt (should fail)...")
+    success, error = delete_table(table_id)
+    assert not success, "Second delete should fail - table already deleted"
+    assert error is not None, "Error message should be present for second delete"
+    print(f"    ✓ Second delete correctly failed: {error}")
+    
+    print("✓ TEST 4 PASSED: Double delete properly rejected\n")
+
 # =============================================================================
 # For these tests to be successful you need to compile server with tests consts
 # set, so that for small csv files query execution takes around 5s
 # =============================================================================
 
-#!/usr/bin/env python3
-import time
-from db_client import (
-    put_table, 
-    delete_table, 
-    get_table_by_id, 
-    post_copy_query, 
-    get_query_by_id
-)
 
 
 def test_delete_table_with_running_query():
     """
-    Test 4: Submit COPY query, immediately delete table, verify deletion is blocked 
-    until query completes, then verify table is deleted after query finishes.
+    Test 4: Submit COPY query, immediately delete table, verify deletion is blocked until query completes, then verify table is deleted after query finishes.
     """
     print("\n" + "="*80)
     print("TEST: DELETE table while COPY query is running")
@@ -216,12 +259,13 @@ def test_delete_table_after_query_completion():
     print("TEST: DELETE table after COPY query completes normally")
     print("="*80)
     
-    table_name = "departments"
+    table_name = "employees"
     columns = [
-        {"name": "dept_id", "type": "INT64"},
-        {"name": "dept_name", "type": "VARCHAR"}
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
     ]
-    csv_file = "employees_with_header.csv"  # Reusing CSV for simplicity
+    csv_file = OK_EMPLOYEES_WITH_HEADER
     
     # Step 1: Create table
     print(f"  Step 1: Creating table '{table_name}'...")
@@ -235,7 +279,6 @@ def test_delete_table_after_query_completion():
     success, query_id, error = post_copy_query(
         csv_file,
         table_name,
-        destination_columns=["dept_id", "dept_name"],  # Map first 2 columns
         does_csv_contain_header=True
     )
     assert success, f"Failed to submit COPY query: {error}"
@@ -279,7 +322,7 @@ def run_all_delete_with_query_tests():
     
     try:
         test_delete_table_with_running_query()
-        # test_delete_table_after_query_completion()
+        test_delete_table_after_query_completion()
         
         print("\n" + "="*80)
         print("ALL DELETE WITH QUERY TESTS PASSED! ✓")
@@ -301,10 +344,11 @@ def run_all_delete_table_tests():
     print("="*80)
     
     try:
-        # test_put_and_delete_table()
-        # test_delete_non_existent_table()
-        # test_delete_table_with_invalid_id()
-        run_all_delete_with_query_tests()
+        test_put_and_delete_table()
+        test_delete_non_existent_table()
+        test_delete_table_with_invalid_id()
+        test_double_delete()
+        # run_all_delete_with_query_tests()
         
         print("\n" + "="*80)
         print("ALL DELETE TABLE TESTS PASSED! ✓")

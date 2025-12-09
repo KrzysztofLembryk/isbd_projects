@@ -269,7 +269,7 @@ impl QueryWorker
                     )?;
                 }
             }
-            println!("row_count after push batches: {}", row_count);
+
             if row_count as usize % BATCH_SIZE == 0
             {
                 QueryWorker::save_batches_to_files(

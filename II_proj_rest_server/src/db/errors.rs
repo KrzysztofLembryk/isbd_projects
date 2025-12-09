@@ -18,6 +18,7 @@ pub enum DbError {
     NotFound(String),
     InternalDbError(String),
     CsvError(String),
+    InvalidName(String),
     Other(String),
 }
 
@@ -42,6 +43,7 @@ impl fmt::Display for DbError {
             DbError::NotFound(msg) => write!(f, "Not found: {}", msg),
             DbError::InternalDbError(msg) => write!(f, "Internal Db error: {}", msg),
             DbError::CsvError(msg) => write!(f, "CSV error: {}", msg),
+            DbError::InvalidName(msg) => write!(f, "Invalid Name: '{}'", msg),
             DbError::Other(msg) => write!(f, "Error: {}", msg),
         }
     }

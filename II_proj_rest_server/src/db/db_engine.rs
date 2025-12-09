@@ -4,7 +4,7 @@ use crate::db::manager::messages::{DbClientMsg, DbCmd, ResMsg, DbWorkerMsg};
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use uuid::Uuid;
-use log::{info, warn, debug, error};
+use log::{info, debug, error};
 
 enum BreakMsg
 {
@@ -148,7 +148,7 @@ fn handle_worker_cmd(
             }
         },
         DbWorkerMsg::InternalError(worker_id, error_msg) => {
-            error!("DbTask::handle_worker_cmd: from worker: '{}' got INTERNAL ERROR: {:?}", worker_id, error_msg);
+            error!("DbEngine::handle_worker_cmd: from worker: '{}'\nGot INTERNAL ERROR: {:?}", worker_id, error_msg);
             return BreakMsg::DoBreak;
         },
         _ => {
@@ -209,7 +209,7 @@ fn handle_client_cmd(
             let res = db_manager.get_queries();
 
             send_result_to_client(
-                ResMsg::ResQueries(res),
+                ResMsg::ResQueries(Ok(res)),
                 &conn_id, 
                 db_manager
             );
