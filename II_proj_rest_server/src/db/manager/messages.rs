@@ -50,7 +50,7 @@ pub enum DbClientMsg
 
 pub enum ResMsg
 {
-    ResTables(Result<Vec<ShallowTable>, DbError>),
+    ResTables(Vec<ShallowTable>),
     ResTableDetails(Result<TableSchema, DbError>),
     ResDeleteTable(Result<(), DbError>),
     ResPutTable(Result<Uuid, DbError>),

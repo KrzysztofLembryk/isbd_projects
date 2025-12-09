@@ -34,12 +34,9 @@ async fn get_tables(
         Some(msg) =>{
             match msg
             {
-                ResMsg::ResTables(Ok(tables)) => 
+                ResMsg::ResTables(tables) => 
                     HttpResponse::Ok()
                         .json(tables),
-                ResMsg::ResTables(Err(e)) => 
-                    HttpResponse::NotFound()
-                        .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
                         .body("get_tables: got Wrong message from db"),
             }
@@ -62,8 +59,6 @@ async fn get_table_details(
         &conn_id,
         DbClientMsg::GetTableDetails(conn_id, *table_id)
     ).await;
-
-    sleep(Duration::from_secs(10)).await;
 
     let res = rx_conn.recv().await;
 

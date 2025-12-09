@@ -3,23 +3,24 @@ use serde;
 use serde_json;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
-use std::{result, vec};
+use std::{vec};
 use tokio::fs as t_fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
+use log::{info, warn, debug, error};
 
 use crate::db::constants::{
     FILE_PATH_REGEX, LogicalColType, MAX_ALLOWED_METADATA_CHANGES, MAX_COL_COUNT, MAX_COL_NAME_LEN,
 };
 use crate::db::errors::DbError;
 use crate::db::manager::messages::{
-    CopyQData, DbWorkerMsg, QueryCompletionMsg, QueryData, SelectQData, WorkerMsgRes,
+    CopyQData, QueryData, SelectQData,
 };
 use crate::db::storage::col_data::ColData;
 use crate::db::storage::col_header::ColHeader;
 use crate::schemas::column::{Column, DataColumn, Int64Column, VarcharColumn};
 use crate::schemas::query::{
-    AllowedQuery, CopyQuery, Query, QueryResult, QueryStatus, QueryTableName,
+    AllowedQuery, Query, QueryResult, QueryStatus, QueryTableName,
 };
 use crate::schemas::table::{ShallowTable, TableSchema};
 
@@ -106,6 +107,7 @@ impl DbMetadata {
     }
 
     pub async fn read_from_file(metadata_path: &str) -> Result<DbMetadata, DbError> {
+
         let mut f = t_fs::File::open(metadata_path).await?;
         let mut buf = vec![];
 
@@ -737,6 +739,30 @@ impl TableMetadata {
         &self.table_name
     }
 
+    pub fn all_column_files_are_empty(&self) -> Result<bool, DbError>
+    {
+        let mut presence_count: usize = 0;
+        for col_meta in &self.columns
+        {
+            println!("col_name: {}", col_meta.c_name);
+            if col_meta.column_files_present()
+            {
+                presence_count += 1;
+            }
+            println!("presence count: {}", presence_count);
+        }
+
+        println!("columns len: {}", self.columns.len());
+        if presence_count != 0 && presence_count != self.columns.len()
+        {
+            return Err(DbError::InternalDbError(
+                format!("TableMEtadata::are_all_column_files_empty - presence_count is not equal to columns len, this means that some columns have files and other don't, this cannot happen")
+            ));
+        }
+
+        return Ok(presence_count == 0);
+    }
+
     pub fn columns(&self) -> &Vec<ColMetadata> {
         &self.columns
     }
@@ -891,6 +917,11 @@ impl ColMetadata {
         }
     }
 
+    pub fn column_files_present(&self) -> bool
+    {
+        !self.c_files.is_empty()
+    }
+
     pub fn c_name(&self) -> &str {
         &self.c_name
     }
@@ -1034,18 +1065,19 @@ fn table_schema_into_columns_vec(
             });
         }
 
-        let file_path = create_file_path(
-            db_data_dir_path,
-            table_id,
-            schema.name(),
-            &col_name,
-            file_idx,
-        );
+        // File paths will be created when first copy query comes
+        // let file_path = create_file_path(
+        //     db_data_dir_path,
+        //     table_id,
+        //     schema.name(),
+        //     &col_name,
+        //     file_idx,
+        // );
 
         columns.push(ColMetadata {
             c_name: col_name.clone(),
             c_type: col.c_type(),
-            c_files: vec![file_path],
+            c_files: vec![],
         });
     }
 

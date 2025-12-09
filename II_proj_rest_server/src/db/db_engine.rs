@@ -29,6 +29,7 @@ impl DbEngine
         info!("Starting db engine.\ndb_data_dir_path: '{}',\nmetadata_file_path: '{}'", db_data_dir_path, metadata_file_path);
 
         let (tx_db, mut rx_db) = unbounded_channel::<DbCmd>();
+
         let mut db_manager = 
             DbManager::new(
                 tx_db.clone(), 

@@ -1,10 +1,9 @@
 use crate::db::storage::metadata::{DbMetadata, TableMetadata};
-use crate::db::constants::{MAX_DB_WORKERS};
 use crate::schemas::error::MultipleProblemsError;
-use crate::schemas::query::{AllowedQuery, CopyQuery, Query, QueryResult, QueryStatus, QueryType, SelectQuery, ShallowQuery};
+use crate::schemas::query::{AllowedQuery, Query, QueryResult, QueryStatus, QueryType, ShallowQuery};
 use crate::schemas::table::{TableSchema, ShallowTable};
 use crate::db::errors::DbError;
-use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, DbWorkerMsg, QueryCompletionMsg, QueryFailureMsg, ResMsg, WorkerMsgRes};
+use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, QueryCompletionMsg, QueryFailureMsg, ResMsg, WorkerMsgRes};
 use crate::db::manager::db_workers::workers_manager::WorkersManager;
 use crate::db::manager::query_store::QueryStore;
 
@@ -40,7 +39,7 @@ impl DbPaths
 
 pub struct DbManager
 {
-    db_meta: Option<DbMetadata>,
+    db_meta: DbMetadata,
     query_store: QueryStore,
     paths: DbPaths,
     workers_manager: WorkersManager,
@@ -56,17 +55,26 @@ impl DbManager
         nbr_of_db_workers: usize
     ) -> Result<DbManager, DbError>
     {
-        let mut db_manager = DbManager{
-            db_meta: None,
-            query_store: QueryStore::new(),
-            paths: DbPaths::new(metadata_file_path, db_data_dir_path),
-            workers_manager: WorkersManager::new(
-                db_data_dir_path, nbr_of_db_workers, tx_to_db), 
-            tx_server_channels: HashMap::new(),
-        };
+        let db_meta = DbManager::init_metadata(
+                                    metadata_file_path, 
+                                    db_data_dir_path
+                                ).await?;
+        let query_store = QueryStore::new();
+        let paths = DbPaths::new(metadata_file_path, db_data_dir_path);
+        let workers_manager = WorkersManager::new(
+                                        db_data_dir_path, 
+                                        nbr_of_db_workers, 
+                                        tx_to_db
+                                    );
+        let tx_server_channels: HashMap<Uuid, UnboundedSender<ResMsg>> = HashMap::new();
 
-        // TODO: this should be inside DbMangaer, thus db_meta shouldnt be Option
-        db_manager.init_metadata().await?;
+        let db_manager = DbManager{
+            db_meta,
+            query_store,
+            paths,
+            workers_manager, 
+            tx_server_channels,
+        };
 
         Ok(db_manager)
     }
@@ -75,14 +83,9 @@ impl DbManager
     // ########################## TABLES HANDLERS #############################
     // ########################################################################
 
-    pub fn get_tables(&self) -> Result<Vec<ShallowTable>, DbError>
+    pub fn get_tables(&self) -> Vec<ShallowTable>
     {
-        if let Some(meta) = &self.db_meta
-        {
-            return Ok(meta.get_tables());
-        }
-
-        Err(DbError::NotFound(format!("DbManager::get_tables: database was not initialized")))
+        return self.db_meta.get_tables();
     }
 
     pub fn get_table_details(
@@ -90,25 +93,13 @@ impl DbManager
         table_id: &Uuid
     ) -> Result<TableSchema, DbError>
     {
-        if let Some(meta) = &self.db_meta
-        {
-            return meta.get_table_details(table_id);
-        }
-
-        Err(DbError::NotFound(format!("DbManager::get_table_details: database was not initialized")))
+        return self.db_meta.get_table_details(table_id);
     }
 
     pub fn mark_table_to_delete(
         &mut self, table_id: &Uuid) -> Result<(), DbError>
     {
-        let db_meta = self.db_meta
-                .as_mut()
-                .ok_or_else(|| DbError::NotFound("DbManager::mark_table_to_delete: database was not initialized".to_string()
-        ))?;
-
-        db_meta.mark_table_for_deletion(table_id)?;
-
-        Ok(())
+        self.db_meta.mark_table_for_deletion(table_id)
     }
 
     pub fn delete_table(
@@ -116,12 +107,7 @@ impl DbManager
         table_id: &Uuid
     ) -> Result<TableMetadata, DbError>
     {
-        let db_meta = self.db_meta
-                .as_mut()
-                .ok_or_else(|| DbError::NotFound("DbManager::delete_table: database was not initialized".to_string()
-        ))?;
-
-        db_meta.delete_table(table_id)
+        self.db_meta.delete_table(table_id)
     }
 
     pub fn put_table(
@@ -129,10 +115,7 @@ impl DbManager
         schema: &TableSchema
     ) -> Result<Uuid, DbError> 
     {
-        let db_meta = self.db_meta
-                .as_mut()
-                .ok_or_else(|| DbError::NotFound("DbManager::put_table: database was not initialized".to_string()
-        ))?;
+        let db_meta = &mut self.db_meta;
         let table_id = db_meta.put_table(schema)?;
 
         if db_meta.is_enough_changes()
@@ -173,10 +156,7 @@ impl DbManager
 
     pub fn post_query(&mut self, query: AllowedQuery) -> Result<Uuid, DbError>
     {
-        let db_meta = self.db_meta
-                .as_mut()
-                .ok_or_else(|| DbError::NotFound("DbManager::post_query: database was not initialized".to_string()
-        ))?;
+        let db_meta = &mut self.db_meta;
 
         // Function checks if query is for table that exists 
         // if it is it increases nbr of queries operating on this table
@@ -248,10 +228,7 @@ impl DbManager
     {
         self.free_db_worker(worker_id)?;
 
-        let db_meta = self.db_meta
-                .as_mut()
-                .ok_or_else(|| DbError::NotFound("DbManager::handle_completed_query: database was not initialized".to_string()
-        ))?;
+        let db_meta = &mut self.db_meta;
 
         // If everything works as intended this should never return error
         db_meta.decrease_nbr_of_queries_operating_on_table(
@@ -282,10 +259,7 @@ impl DbManager
         // We always want to free worker first
         self.free_db_worker(worker_id)?;
 
-        let db_meta = self.db_meta
-                .as_mut()
-                .ok_or_else(|| DbError::InternalDbError("DbManager::handle_completed_query: database was not initialized".to_string()
-        ))?;
+        let db_meta = &mut self.db_meta;
 
         db_meta.decrease_nbr_of_queries_operating_on_table(
             Some(&q_msg.table_id()),
@@ -322,10 +296,7 @@ impl DbManager
             let table_name = self.query_store.get_query_table_name(&pending_q_id)?;
             let query_type = self.query_store.get_query_type(&pending_q_id)?;
 
-            let db_meta = self.db_meta
-                    .as_mut()
-                    .ok_or_else(|| DbError::InternalDbError("DbManager::post_query: database was not initialized".to_string()
-            ))?;
+            let db_meta = &mut self.db_meta;
 
             if !DbManager::acquire_copy_lock_if_needed(
                 &query_type,
@@ -426,11 +397,7 @@ impl DbManager
             WorkerMsgRes::CopyRes(c_res) => {
                 // We are not storing copy query results BUT we need to update
                 // table columns filepaths
-                let db_meta = self.db_meta
-                        .as_mut()
-                        .ok_or_else(|| DbError::InternalDbError("DbManager::handle_completed_query: database was not initialized".to_string()
-                ))?;
-                db_meta.append_newly_created_column_files(
+                self.db_meta.append_newly_created_column_files(
                     &table_id, 
                     c_res
                 )?;
@@ -514,14 +481,9 @@ impl DbManager
 
     fn save_metadata(&self) -> Result<(), DbError>
     {
-        if let Some(meta) = &self.db_meta
-        {
-            return self.workers_manager.notify_maintenance_worker(
-                DbMaintenanceMsg::SaveMetadata(meta.clone())
-            );
-        }
-
-        Err(DbError::NotFound(format!("DbManager::put_table: database was not initialized")))
+        return self.workers_manager.notify_maintenance_worker(
+            DbMaintenanceMsg::SaveMetadata(self.db_meta.clone())
+        );
     }
 
     async fn perform_shutdown(self) -> Result<(), DbError>
@@ -529,31 +491,29 @@ impl DbManager
         self.workers_manager.shutdown().await
     }
 
-    async fn init_metadata(&mut self) -> Result<(), DbError>
+    async fn init_metadata(
+        metadata_path: &str, 
+        data_dir: &str
+    ) -> Result<DbMetadata, DbError>
     {
+        debug!("DbManager::init_metadata");
         // To start db, db metadata file must be present
-        let metadata_path = &self.paths.metadata_file_path;
-        let data_dir = &self.paths.data_dir_path;
+        return match DbMetadata::read_from_file(metadata_path).await
+        {
+            Ok(meta) => Ok(meta),
+            Err(DbError::IoError(ref io_err)) 
+                if io_err.kind() == err_kind::NotFound => {
+                    let db = DbMetadata::new_empty(
+                        metadata_path, 
+                        data_dir,
+                    )?;
 
-        self.db_meta = Some(
-            match DbMetadata::read_from_file(metadata_path).await
-            {
-                Ok(meta) => meta,
-                Err(DbError::IoError(ref io_err)) 
-                    if io_err.kind() == err_kind::NotFound => {
-                        let db = DbMetadata::new_empty(
-                            metadata_path, 
-                            data_dir,
-                        )?;
+                    db.save_to_file().await?;
 
-                        db.save_to_file().await?;
-
-                        db
-                    },
-                Err(e) => return Err(DbError::InternalDbError(format!("DbManager::init_metadata - {}",e)))
-            }
-        );
-        Ok(())
+                    Ok(db)
+                },
+            Err(e) => return Err(DbError::InternalDbError(format!("DbManager::init_metadata - {}",e)))
+        };
     }
 
 }

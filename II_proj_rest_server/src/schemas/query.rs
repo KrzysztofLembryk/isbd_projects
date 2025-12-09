@@ -242,6 +242,7 @@ impl QueryResult
 {
     pub fn new(row_count: usize, columns: Vec<DataColumn>) -> QueryResult
     {
+        // TODO: add validation if row count is equal to all columns lenghts
         QueryResult { row_count, columns }
     }
 

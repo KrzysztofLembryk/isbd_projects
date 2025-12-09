@@ -23,11 +23,11 @@ mod db_manager {
     {
         let (db_manager, _temp_dir, _tx_db, _rx_db) = setup_test_db_manager(2).await;
         
-        let tables = db_manager.get_tables();
+        let tables_vec = db_manager.get_tables();
 
-        assert!(tables.is_ok());
+        // assert!(tables.is_ok());
 
-        let tables_vec = tables.unwrap();
+        // let tables_vec = tables.unwrap();
         
         // Check correct number of tables
         assert_eq!(tables_vec.len(), N_TABLES);

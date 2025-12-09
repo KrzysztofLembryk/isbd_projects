@@ -593,6 +593,40 @@ impl QueryWorker
     ) -> DbWorkerMsg 
     {
         let table_meta: &TableMetadata = s_q.table_metadata();
+        // TODO: move this to other function
+        match table_meta.all_column_files_are_empty()
+        {
+            Ok(is_empty) => {
+                if is_empty
+                {
+                    let n_rows = 0;
+                    return DbWorkerMsg::QueryCompleted(
+                        worker_id, 
+                        QueryCompletionMsg::new(
+                            s_q.query_id(), 
+                            s_q.table_id(), 
+                            n_rows, 
+                            WorkerMsgRes::SelectRes(
+                                QueryResult::new(n_rows as usize, vec![])
+                            )
+                        )
+                    )
+                };
+            },
+            Err(e) => {
+                return DbWorkerMsg::InternalError(
+                    worker_id, 
+                    QueryFailureMsg::new(
+                        s_q.query_id(), 
+                        s_q.table_id(), MultipleProblemsError::new_with_one_problem(
+                            &e.to_string(), 
+                            "QueryWorker::handle_select"
+                        )
+                    )
+                );
+            }
+        }
+
         let query_id = s_q.query_id();
         let table_id = table_meta.table_id();
         let table_name = table_meta.table_name();
@@ -618,7 +652,7 @@ impl QueryWorker
                     query_id, 
                     table_id, 
                     table_name, 
-                    "select",
+                    "SELECT",
                 );
             }
         }

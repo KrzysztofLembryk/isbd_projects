@@ -86,7 +86,7 @@ impl<T: ColType> ColData<T>
         size_read: &mut usize,
         header: &mut ColHeader,
         remaining_files: &mut VecDeque<&str>,
-        buf: &mut [u8; BUF_SIZE],    
+        buf: &mut [u8],    
         f: &mut tokio_fs::File,
         dir_path: &str
     ) -> Result<bool, DbError>
@@ -181,12 +181,6 @@ impl<T: ColType> ColData<T>
                 new_f.write(&buf[available_space..bytes_read]).await?;
 
                 return Ok(new_f);
-
-                // We dont want recursion
-                // return Box::pin(self._save_data_chunk_to_file(
-                //     new_f, 
-                //     bytes_read - free_space_size, 
-                //     &buf[free_space_size..bytes_read])).await;
             }
         }
     }
@@ -197,46 +191,23 @@ impl<T: ColType> ColData<T>
         mut f: tokio_fs::File,
     ) -> Result<tokio_fs::File, DbError>
     {
-        let mut buf = [0u8; BUF_SIZE];
-        let mut buf_idx = 0;
-
+        let mut curr_pos: usize = 0;
+        let vals_len = vals.len();
         // TODO: Probably we could use slicing and just jump CHUNK_SIZE_BYTES in
         // vals vector
-        for c in vals
+        while curr_pos < vals_len
         {
-            let buf_val = buf
-                .get_mut(buf_idx)
-                .ok_or_else(|| DbError::Other(
-                    format!("ColData::_do_the_save - buf_idx {} out of bounds for buffer (len: {})", buf_idx, BUF_SIZE)))?;
+            let end_pos = std::cmp::min(curr_pos + BUF_SIZE, vals_len);
+            let chunk = &vals[curr_pos..end_pos];
+            let chunk_len = chunk.len();
 
-            *buf_val = *c;
-            buf_idx += 1;
-
-            // only when full buff we save chunk
-            if buf_idx >= BUF_SIZE
-            {
-                let bytes_read = buf_idx;
-
-                f = self._save_data_chunk_to_file(
-                    f, 
-                    bytes_read, 
-                    &buf).await?;
-
-                buf_idx = 0;
-            }
-        }
-
-        // It means that we didnt save last chunk since it wasnt of max size
-        if buf_idx != 0
-        {
             f = self._save_data_chunk_to_file(
                 f, 
-                buf_idx, 
-                &buf).await?;
-        }
+                chunk_len, 
+                &chunk).await?;
 
-        // TODO: add variable that checks this
-        // We might have not updated data in header so we do it now to be sure
+            curr_pos += BATCH_SIZE;
+        }
         self.header.modify_data_size_in_file(&mut f).await?;
 
         Ok(f)
@@ -279,7 +250,7 @@ impl ColData<i64>
         dir_path: &str
     ) -> Result<ColData<i64>, DbError>
     {
-        let mut buf = [0 as u8; BUF_SIZE];
+        let mut buf = vec![0u8; BUF_SIZE];
         let mut bytes_read;
         let mut buf_idx = 0;
 
@@ -476,7 +447,8 @@ impl ColData<String>
         dir_path: &str,
     ) -> Result<ColData<String>, DbError>
     {
-        let mut buf = [0 as u8; BUF_SIZE];
+        // for reading all given column files, we do one buffer allocation
+        let mut buf = vec![0u8; BUF_SIZE];
         let mut bytes_read;
         let mut buf_idx = 0;
 

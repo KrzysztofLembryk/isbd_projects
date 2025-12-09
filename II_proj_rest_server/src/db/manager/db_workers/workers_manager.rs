@@ -1,13 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::format;
-use tokio::io::Join;
-use uuid::Uuid;
 use tokio::task::JoinHandle;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use crate::db::errors::DbError;
 use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, DbWorkerMsg, QueryData};
 use crate::db::manager::db_workers::maintenance_worker::MaintenanceWorker;
 use crate::db::manager::db_workers::query_worker::QueryWorker;
+
+use log::{info, warn, debug, error};
 
 pub struct WorkersManager
 {
@@ -24,22 +23,31 @@ impl WorkersManager
         tx_to_db: UnboundedSender<DbCmd>
     ) -> WorkersManager
     {
+        debug!("WorkersManager - Maintenansce worker spawn");
         let maintenance_worker = MaintenanceWorker::spawn(db_data_dir_path);
+        debug!("WorkersManager - Maintenansce worker AFTER spawn");
         let mut query_workers: HashMap<usize, QueryWorkerHandler> = HashMap::new();
         let mut available_workers: HashSet<usize> = HashSet::new();
 
         for worker_id in 0..n_workers
         {
+
+            debug!("WorkersManager - channels for worker {}", worker_id);
             let (tx_to_worker, rx) = unbounded_channel::<DbWorkerMsg>();
-            let mut query_worker = QueryWorker::new(
+
+            debug!("WorkersManager - worker new");
+            let mut boxed_query_worker = Box::new(QueryWorker::new(
                 worker_id, 
                 tx_to_db.clone(), 
                 rx
-            );
+            ));
+
+            debug!("WorkersManager - tokio spawn");
             let handle = tokio::spawn(async move {
-                query_worker.run().await
+                boxed_query_worker.run().await
             });
 
+            debug!("WorkersManager - worker handler");
             let worker_handler = QueryWorkerHandler::new(worker_id, tx_to_worker, handle);
 
             available_workers.insert(worker_id);

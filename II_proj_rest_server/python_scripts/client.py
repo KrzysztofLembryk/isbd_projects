@@ -4,12 +4,12 @@ import concurrent.futures
 import time
 
 SERVER_URL = "http://localhost:8080"
-TABLE_ID = "8b689f56-15dd-4803-9232-8b1e9ac65269"
-NUM_REQUESTS = 10
+TABLE_ID = "f0652708-9ca9-4d6f-bf34-a52274d1ad16"
+NUM_REQUESTS = 1
 
-def send_request(request_id):
-    # url = f"{SERVER_URL}/table/{TABLE_ID}"
-    url = f"{SERVER_URL}/tables"
+def get_table_details(request_id: int, table_id: str):
+    url = f"{SERVER_URL}/table/{table_id}"
+    # url = f"{SERVER_URL}/tables"
     start = time.time()
     try:
         response = requests.get(url)
@@ -71,18 +71,6 @@ def sample_create_table(table_name: str):
     else:
         print(f"CREATE TABLE ERROR: {error}")
 
-def sample_get_table_details():
-    print(f"Sending {NUM_REQUESTS} concurrent requests...")
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_REQUESTS) as executor:
-        futures = [executor.submit(send_request, i) for i in range(1, NUM_REQUESTS + 1)]
-        results = [f.result() for f in concurrent.futures.as_completed(futures)]
-    
-    print(f"\nAll {NUM_REQUESTS} requests completed")
-    print(f"Success: {sum(1 for r in results if r == 200)}")
-    print(f"Errors: {sum(1 for r in results if r != 200)}")
-
-# ...existing code...
 
 def post_query(query_definition):
     """
@@ -149,12 +137,27 @@ def sample_post_copy_query(table_name, filepath):
     else:
         print(f"POST QUERY ERROR: {error}")
 
+def post_select_query(table_name):
+    """Example: Submit a SELECT query"""
+    query_def = {
+        "queryDefinition": {
+            "tableName": table_name
+        }
+    }
+    
+    success, query_id, error = post_query(query_def)
+    
+    if success:
+        print(f"SELECT query created with ID: {query_id}")
+    else:
+        print(f"POST QUERY ERROR: {error}")
 
 if __name__ == "__main__":
     # sample_get_table_details()
-    # for i in range(1, 3):
+    # for i in range(1, 2):
     #     sample_create_table(f"table_{i}")
-    
+    get_table_details(1, TABLE_ID) 
+    post_select_query("table_1")
     # sample_post_select_query("table_1")
     # sample_post_select_query("table_X")
-    sample_post_copy_query("table_1", "random/filepath")
+    # sample_post_copy_query("table_1", "random/filepath")

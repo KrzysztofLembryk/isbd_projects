@@ -8,9 +8,9 @@ const MB_1: usize = 1024 * 1024;
 // ############################################################################
 
 /// Size of buffer we read data into
-pub const BUF_SIZE: usize = 64 * MB_1; 
+pub const BUF_SIZE: usize = 2 * MB_1; 
 /// Number of rows we want to read in one go
-pub const BATCH_SIZE: usize = 10; 
+pub const BATCH_SIZE: usize = 3; 
 
 // ############################################################################
 // ########################### FILES CONSTANTS ################################
@@ -19,7 +19,7 @@ pub const BATCH_SIZE: usize = 10;
 pub const FILE_PATH_REGEX: &str = r"^\.?[a-zA-Z/]([a-zA-Z0-9_/]*|/\.)*[a-zA-Z0-9_]*$";
 pub const METADATA_FILE_PATH: &str = "./db_metadata";
 pub const DB_DATA_DIR: &str = "./db_data";
-pub const CSV_DELIM: u8 = b';';
+pub const CSV_DELIM: u8 = b',';
 
 pub const COPY_QUERY_NAME: &str = "COPY QUERY";
 pub const SELECT_QUERY_NAME: &str = "SELECT QUERY";
