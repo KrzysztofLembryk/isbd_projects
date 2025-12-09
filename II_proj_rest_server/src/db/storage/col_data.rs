@@ -356,10 +356,9 @@ impl ColData<i64>
     {
         if ints.len() > BATCH_SIZE
         {
-            return Err(DbError::SizeExceeded{
-                msg: format!("ColData<INT64> - save_to_file - provided vector of ints has greater size: '{}' than BATCH_SIZE", ints.len()),
-                max: BATCH_SIZE
-            });
+            return Err(DbError::InternalDbError(
+                format!("ColData<INT64> - save_to_file - provided vector of ints has greater size: '{}' than BATCH_SIZE: {}", ints.len(),BATCH_SIZE
+            )));
         }
 
         let mut f = self._get_file_handle().await?;

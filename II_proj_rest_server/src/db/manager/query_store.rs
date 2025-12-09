@@ -132,7 +132,17 @@ impl QueryStore
         {
             return Ok(res.clone());
         }
-        Err(DbError::NotFound(format!("Query: '{}' hasn't FAILED", q_id)))
+        else
+        {
+            if let Some(_) = self.queries.get(q_id)
+            {
+                return Err(DbError::NotFound(format!("Query: '{}' hasn't FAILED", q_id)));
+            }
+            else
+            {
+                return Err(DbError::NotFound(format!("Query: '{}' NOT FOUND in db", q_id)));
+            }
+        }
     }
 
     pub fn remove_query_res(&mut self, query_id: &Uuid)

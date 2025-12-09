@@ -117,7 +117,7 @@ fn send_result_to_client(
         conn_id, 
         res_msg
     ).unwrap();
-    db_manager.unregister(conn_id);
+    db_manager.unregister_conn(conn_id);
 }
 
 fn handle_worker_cmd(
@@ -168,7 +168,7 @@ fn handle_client_cmd(
     match client_msg
     {
         DbClientMsg::Register(id, tx) => {
-            db_manager.register(&id, tx);
+            db_manager.register_conn(&id, tx);
         },
         DbClientMsg::GetTables(conn_id) => {
             let res = db_manager.get_tables();

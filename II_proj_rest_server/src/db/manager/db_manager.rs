@@ -41,7 +41,7 @@ pub struct DbManager
 {
     db_meta: DbMetadata,
     query_store: QueryStore,
-    paths: DbPaths,
+    _paths: DbPaths,
     workers_manager: WorkersManager,
     tx_server_channels: HashMap<Uuid, UnboundedSender<ResMsg>>
 }
@@ -71,7 +71,7 @@ impl DbManager
         let db_manager = DbManager{
             db_meta,
             query_store,
-            paths,
+            _paths: paths,
             workers_manager, 
             tx_server_channels,
         };
@@ -96,20 +96,11 @@ impl DbManager
         return self.db_meta.get_table_details(table_id);
     }
 
-    pub fn mark_table_to_delete(
+    fn mark_table_to_delete(
         &mut self, table_id: &Uuid) -> Result<(), DbError>
     {
         info!("Marking Table for Deletion, id: {}", table_id);
         self.db_meta.mark_table_for_deletion(table_id)
-    }
-
-    fn delete_table_from_metadata(
-        &mut self,
-        table_id: &Uuid
-    ) -> Result<TableMetadata, DbError>
-    {
-        info!("DELETING table from metadata: {}", table_id);
-        self.db_meta.delete_table(table_id)
     }
 
     pub fn delete_table(&mut self, table_id: &Uuid) -> Result<(), DbError>
@@ -122,7 +113,7 @@ impl DbManager
                 return Err(e);
             },
             Ok(_) => {
-                match self.delete_table_from_metadata(&table_id)
+                match self.db_meta.delete_table(&table_id)
                 {
                     // No queries running on table, so we can 
                     // schedule table deletion by Maintenance worker
@@ -276,6 +267,15 @@ impl DbManager
             QueryStatus::COMPLETED
         )?;
 
+        // We need to firstly store query res, since if it is copy query it will
+        // change metadata, so it may happen that we have deleted table before
+        // making these changes if storing was after can_table_be_deleted
+        DbManager::store_completed_query(
+            q_msg, 
+            db_meta, 
+            &mut self.query_store
+        )?;
+
         if db_meta.can_table_be_deleted(table_id)?
         {
             let table_meta = db_meta.get_table_metadata(table_id)?;
@@ -289,7 +289,6 @@ impl DbManager
                     )?;
         }
 
-        self.store_completed_query(q_msg)?;
         self.execute_next_query()?;
 
         Ok(())
@@ -321,6 +320,11 @@ impl DbManager
             QueryStatus::FAILED
         )?;
 
+        DbManager::store_failed_query(
+            q_msg, 
+            &mut self.query_store
+        );
+
         if db_meta.can_table_be_deleted(table_id)?
         {
             let table_meta = db_meta.get_table_metadata(table_id)?;
@@ -334,7 +338,6 @@ impl DbManager
                     )?;
         }
 
-        self.store_failed_query(q_msg);
         self.execute_next_query()?;
 
         Ok(())
@@ -437,8 +440,9 @@ impl DbManager
     }
 
     fn store_completed_query(
-        &mut self, 
-        completed_q: QueryCompletionMsg
+        completed_q: QueryCompletionMsg,
+        db_meta: &mut DbMetadata,
+        query_store: &mut QueryStore,
     ) -> Result<(), DbError>
     {
         let query_id = completed_q.query_id();
@@ -448,7 +452,7 @@ impl DbManager
         match q_res
         {
             WorkerMsgRes::SelectRes(s_res) => {
-                self.query_store.store_query_result(
+                query_store.store_query_result(
                     &query_id,
                     s_res
                 );
@@ -456,7 +460,7 @@ impl DbManager
             WorkerMsgRes::CopyRes(c_res) => {
                 // We are not storing copy query results BUT we need to update
                 // table columns filepaths
-                self.db_meta.append_newly_created_column_files(
+                db_meta.append_newly_created_column_files(
                     &table_id, 
                     c_res
                 )?;
@@ -465,9 +469,9 @@ impl DbManager
         return Ok(());
     }
 
-    fn store_failed_query(&mut self, failed_q: QueryFailureMsg)
+    fn store_failed_query(failed_q: QueryFailureMsg, query_store: &mut QueryStore)
     {
-        self.query_store.store_query_failure(
+        query_store.store_query_failure(
             &failed_q.query_id(), 
             failed_q.problems()
         );
@@ -494,7 +498,7 @@ impl DbManager
     // ########################################################################
     // ################## SERVER CONNECTIONS COMMUNICATION ####################
     // ########################################################################
-    pub fn register(
+    pub fn register_conn(
         &mut self, 
         connection_id: &Uuid, 
         tx: UnboundedSender<ResMsg>
@@ -503,7 +507,7 @@ impl DbManager
         self.tx_server_channels.insert(connection_id.clone(), tx);
     }
 
-    pub fn unregister(&mut self, connection_id: &Uuid)
+    pub fn unregister_conn(&mut self, connection_id: &Uuid)
     {
         self.tx_server_channels.remove(connection_id);
     }
