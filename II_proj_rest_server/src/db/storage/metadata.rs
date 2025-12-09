@@ -135,7 +135,8 @@ impl DbMetadata {
         Ok(metadata)
     }
 
-    pub fn get_tables(&self) -> Vec<ShallowTable> {
+    pub fn get_tables(&self) -> Vec<ShallowTable> 
+    {
         let mut tables: Vec<ShallowTable> = Vec::new();
 
         for (t_id, t_meta) in &self.tables_metadata {
@@ -154,7 +155,11 @@ impl DbMetadata {
         tables
     }
 
-    pub fn get_table_details(&self, table_id: &Uuid) -> Result<TableSchema, DbError> {
+    pub fn get_table_details(
+        &self, 
+        table_id: &Uuid
+    ) -> Result<TableSchema, DbError> 
+    {
         if let Some(tab_meta) = self.tables_metadata.get(table_id) {
             let table_state = self.tables_states
                             .get(table_id)
@@ -175,7 +180,11 @@ impl DbMetadata {
         )))
     }
 
-    pub fn mark_table_for_deletion(&mut self, table_id: &Uuid) -> Result<(), DbError> {
+    pub fn mark_table_for_deletion(
+        &mut self, 
+        table_id: &Uuid
+    ) -> Result<(), DbError> 
+    {
         if !self.tables_metadata.contains_key(table_id)
             || !self.tables_states.contains_key(table_id)
         {
@@ -185,15 +194,31 @@ impl DbMetadata {
             )));
         }
 
-        self.tables_states
-            .get_mut(table_id)
-            .unwrap() // will never panic because of previous checks
-            .delete_flag = DeleteFlag::DoDelete;
+
+        let table_state = &mut self.tables_states
+                                    .get_mut(table_id)
+                                    .unwrap() // will never panic because of previous checks
+                                    .delete_flag;
+
+        if *table_state == DeleteFlag::DoDelete
+        {
+            return Err(DbError::NotFound(format!(
+                "Table with id: {} couldn't be deleted, since it's not in database",
+                table_id
+            )));
+        }
+
+        // Only if table is not marked to be deleted we will delete it
+        *table_state = DeleteFlag::DoDelete;
 
         Ok(())
     }
 
-    pub fn delete_table(&mut self, table_id: &Uuid) -> Result<TableMetadata, DbError> {
+    pub fn delete_table(
+        &mut self, 
+        table_id: &Uuid
+    ) -> Result<TableMetadata, DbError> 
+    {
         let table_meta = self.tables_metadata.get(table_id);
         let table_state = self.tables_states.get(table_id);
 
@@ -229,7 +254,11 @@ impl DbMetadata {
 
     /// Function receives TableSchema and adds table with its columns to
     /// metadata structure, it **DOESN't create** dirs and files
-    pub fn put_table(&mut self, table_schema: &TableSchema) -> Result<TableId, DbError> {
+    pub fn put_table(
+        &mut self, 
+        table_schema: &TableSchema
+    ) -> Result<TableId, DbError> 
+    {
         let table_id = TableId::new_v4();
 
         // TODO: add hashmap that stores table_name: table_id so that we can
@@ -265,7 +294,11 @@ impl DbMetadata {
         Ok(table_id)
     }
 
-    pub fn plan_query_execution(&self, q: &mut Query) -> Result<QueryData, DbError> {
+    pub fn plan_query_execution(
+        &self, q: 
+        &mut Query
+    ) -> Result<QueryData, DbError> 
+    {
         self.authorize_query(q.query_def())?;
         q.update_status(QueryStatus::PLANNING);
 

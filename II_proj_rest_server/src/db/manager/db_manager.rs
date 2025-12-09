@@ -101,6 +101,7 @@ impl DbManager
     pub fn mark_table_to_delete(
         &mut self, table_id: &Uuid) -> Result<(), DbError>
     {
+        info!("Marking Table for Deletion, id: {}", table_id);
         self.db_meta.mark_table_for_deletion(table_id)
     }
 
@@ -251,6 +252,8 @@ impl DbManager
         let is_copy = self.query_store
             .check_if_query_is_copy(&q_msg.query_id())?;
         db_meta.lift_copy_lock_from_table(&q_msg.table_id(), is_copy)?;
+
+        // TODO: here we should check if table has DoDelete flag and if there are no queries operating on it
 
         self.query_store.update_query_status(
             &q_msg.query_id(), 

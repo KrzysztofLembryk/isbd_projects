@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from db_client import (get_table_by_id, delete_table, put_table, get_tables, SERVER_URL)
 
 # ============================================================================
-# END-TO-END TESTS
+# END-TO-END PUT_TABLE TESTS
 # ============================================================================
 
 def test_put_table_and_validate_schema():
