@@ -6,6 +6,8 @@ use std::collections::VecDeque;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use log::{debug};
+
 pub struct QueryStore
 {
     queries: HashMap<Uuid, Query>,
@@ -106,6 +108,7 @@ impl QueryStore
 
     pub fn store_query_result(&mut self, q_id: &Uuid, q_res: QueryResult)
     {
+        debug!("Query result that is being stored: {:?}", q_res);
         let _ = self.queries_results.insert(*q_id, q_res);
     }
 

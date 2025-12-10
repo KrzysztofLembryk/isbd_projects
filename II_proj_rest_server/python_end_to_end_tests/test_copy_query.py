@@ -76,7 +76,7 @@ def test_copy_query_success():
     
     # Get result
     print("  Fetching query result...")
-    success, result, error = get_query_result(select_query_id)
+    success, result, error = get_query_result(select_query_id, row_limit=10)
     assert success and result, f"Failed to get result: {error}"
     
     # Verify data

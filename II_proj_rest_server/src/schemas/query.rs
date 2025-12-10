@@ -229,7 +229,7 @@ impl QueryTableName for AllowedQuery {
 
 
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct QueryResult
 {
     #[serde(rename="rowCount")]
@@ -248,6 +248,37 @@ impl QueryResult
     pub fn push_col_data(&mut self, col_data: DataColumn)
     {
         self.columns.push(col_data);
+    }
+
+    pub fn update_row_count(&mut self) -> Result<(), DbError>
+    {
+        if self.columns.is_empty() {
+            self.row_count = 0;
+            return Ok(());
+        }
+
+        // Get the length of the first column
+        let first_len = match &self.columns[0] {
+            DataColumn::Int64(col) => col.values().len(),
+            DataColumn::Varchar(col) => col.values().len(),
+        };
+
+        // Check all columns have the same length
+        for col in &self.columns {
+            let len = match col {
+                DataColumn::Int64(c) => c.values().len(),
+                DataColumn::Varchar(c) => c.values().len(),
+            };
+            if len != first_len {
+                return Err(DbError::InternalDbError(
+                    "Column lengths do not match in QueryResult".to_string()
+                ));
+            }
+        }
+
+        self.row_count = first_len;
+
+        return Ok(());
     }
 
     pub fn get_n_rows(&self, row_limit: usize) -> Result<QueryResult, DbError>

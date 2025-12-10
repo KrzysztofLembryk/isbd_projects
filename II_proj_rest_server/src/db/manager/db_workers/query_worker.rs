@@ -714,6 +714,7 @@ impl QueryWorker
         match query_result
         {
             Ok((q_res, n_rows)) => {
+                debug!("In worker after handling select query: n_rows: {}, \nquery res: {:?}", n_rows, q_res);
                 return 
                     DbWorkerMsg::QueryCompleted(
                         worker_id,

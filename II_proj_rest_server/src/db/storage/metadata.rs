@@ -818,6 +818,8 @@ impl TableMetadata {
             }
         }
 
+        // After reading all table columns we now can update row count in our result
+
         match row_count {
             None => {
                 // Something is corrupted in our db, since in put_table endpoint
@@ -827,6 +829,8 @@ impl TableMetadata {
                 )));
             }
             Some(row_count) => {
+                // After reading all data and checking that row_count is not none we update row_count in query result
+                q_res.update_row_count()?;
                 return Ok((q_res, row_count));
             }
         }

@@ -258,7 +258,9 @@ impl DbManager
 
         let is_copy = self.query_store.check_if_query_is_copy(&q_msg.query_id())?;
 
-        debug!("Is this query copy: {}", is_copy);
+        if is_copy{
+            debug!("storing COPY QUERY");
+        } else {debug!("storing SELECT QUERY");}
 
         db_meta.lift_copy_lock_from_table(&q_msg.table_id(), is_copy)?;
         self.query_store.update_query_status(

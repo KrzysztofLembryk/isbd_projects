@@ -10,16 +10,16 @@ use log::{info};
 
 #[derive(Deserialize)]
 struct QueryBody {
-    #[serde(default)]
+    #[serde(default, rename= "rowLimit")]
     row_limit: i32,
-    #[serde(default)]
+    #[serde(default, rename = "flushResult")]
     flush_result: bool,
 }
 
 #[get("/result/{query_id}")]
 async fn get_query_result(
     query_id: web::Path<Uuid>,
-    query_body: web::Query<QueryBody>,
+    query_body: web::Json<QueryBody>,
     db_client: web::Data<tokio::sync::RwLock<DbClient>>
 ) -> impl Responder
 {
