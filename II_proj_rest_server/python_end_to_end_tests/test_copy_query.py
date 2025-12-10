@@ -40,7 +40,7 @@ def test_copy_query_success():
     print("TEST 1: COPY query success - correct CSV with header")
     print("="*80)
     
-    table_name = "employees_2"
+    table_name = "employees"
     columns = [
         {"name": "emp_id", "type": "INT64"},
         {"name": "name", "type": "VARCHAR"},
@@ -55,8 +55,7 @@ def test_copy_query_success():
     # Submit COPY query
     print("  Submitting COPY query...")
     success, query_id, error = post_copy_query(
-        # OK_EMPLOYEES_WITH_HEADER,
-        "/data/ok_employees_with_header.csv",
+        OK_EMPLOYEES_WITH_HEADER,
         table_name,
         does_csv_contain_header=True
     )
@@ -877,20 +876,20 @@ def run_all_copy_query_tests():
     print("="*80)
     
     try:
-        # test_copy_query_success()
-        # test_copy_query_wrong_column_name()
-        # test_copy_query_no_header_less_columns()
-        # test_copy_query_no_header_more_columns()
-        # test_copy_query_with_header_less_columns()
-        # test_copy_query_with_header_more_columns()
-        # test_copy_query_str_instead_of_int()
-        # test_copy_query_too_many_values_in_row()
-        # test_copy_query_too_few_values_in_row()
-        # test_copy_query_only_header()
-        # test_copy_query_empty_file()
-        # test_copy_query_non_existent_file()
-        # test_copy_query_sequential_execution()
-        # test_copy_query_500_rows_file()  
+        test_copy_query_success()
+        test_copy_query_wrong_column_name()
+        test_copy_query_no_header_less_columns()
+        test_copy_query_no_header_more_columns()
+        test_copy_query_with_header_less_columns()
+        test_copy_query_with_header_more_columns()
+        test_copy_query_str_instead_of_int()
+        test_copy_query_too_many_values_in_row()
+        test_copy_query_too_few_values_in_row()
+        test_copy_query_only_header()
+        test_copy_query_empty_file()
+        test_copy_query_non_existent_file()
+        test_copy_query_sequential_execution()
+        test_copy_query_500_rows_file()  
         test_copy_query_with_destination_columns()
         
         print("\n" + "="*80)
