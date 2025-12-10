@@ -1,9 +1,9 @@
-use crate::db::constants::{LogicalColType, DB_DATA_DIR, MAGIC_WORD, MAX_FILE_SIZE};
+use crate::db::constants::{LogicalColType, MAGIC_WORD, MAX_FILE_SIZE};
 use crate::db::storage::string_handlers::{StrLenCheckType, read_string_from_buf, check_col_name_correctness};
 use crate::db::errors::{DbError};
 
 use tokio::fs as tokio_fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, AsyncSeek, SeekFrom, AsyncSeekExt};
+use tokio::io::{AsyncWriteExt, SeekFrom, AsyncSeekExt};
 use std::mem;
 use std::fmt;
 
@@ -12,6 +12,7 @@ const COL_HEADER_MIN_SIZE: usize = 14;
 const COL_HEADER_OVERFLOW_OFFSET: u64 = 7;
 const COL_HEADER_DATA_SIZE_OFFSET: u64 = 8;
 
+#[derive(Debug)]
 pub struct ColHeader
 {
     magic_word: u32,    // magic word saying that this is our db file

@@ -4,7 +4,7 @@ use std::fmt;
 use crate::db::constants::LogicalColType;
 use validator::{Validate, ValidationError};
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub enum DataColumn
 {
     Int64(Int64Column),
@@ -69,7 +69,7 @@ impl fmt::Display for Column {
 }
 
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct Int64Column
 {
     values: Vec<i64>
@@ -98,7 +98,7 @@ impl Int64Column
     }
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct VarcharColumn
 {
     values: Vec<String>

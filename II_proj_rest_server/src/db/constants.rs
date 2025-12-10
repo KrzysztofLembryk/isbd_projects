@@ -55,7 +55,7 @@ pub const MAINTENANCE_WORKER_ID: usize = 0;
 // ############################################################################
 // It's not pretty way, but requires least amount of code changing, and not 
 // reading huge csv files
-pub const FOR_TESTS_DO_LONG_QUERY_EXECUTION: bool = false;
+pub const FOR_TESTS_DO_LONG_QUERY_EXECUTION: bool = true;
 pub const FOR_TESTS_QUERY_EXECUTION_TIME: u64 = 5; // seconds
 
 

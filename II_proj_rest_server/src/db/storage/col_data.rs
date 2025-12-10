@@ -2,6 +2,7 @@ use tokio::fs as tokio_fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, SeekFrom, AsyncSeekExt};
 use zstd;
 use std::collections::VecDeque;
+use std::result;
 
 use crate::db::constants::{LogicalColType, BATCH_SIZE, BUF_SIZE, DB_DATA_DIR, ZSTD_ENCODE_LEVEL};
 use crate::db::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle_decode_i, vle_decode_u};
@@ -9,6 +10,11 @@ use crate::db::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle
 use crate::db::storage::col_header::ColHeader;
 use crate::db::errors::DbError;
 
+use log::{debug};
+
+#[cfg(test)]
+#[path = "../tests/storage/test_col_data.rs"]
+mod test_col_data;
 
 pub trait ColType 
 {
@@ -29,6 +35,7 @@ impl ColType for String
     }
 }
 
+#[derive(Debug)]
 pub struct ColData<T: ColType>
 {
     header: ColHeader,
@@ -206,7 +213,7 @@ impl<T: ColType> ColData<T>
                 chunk_len, 
                 &chunk).await?;
 
-            curr_pos += BATCH_SIZE;
+            curr_pos += chunk_len;
         }
         self.header.modify_data_size_in_file(&mut f).await?;
 
@@ -469,13 +476,12 @@ impl ColData<String>
                                             &buf,
                                             dir_path
                                         )?;
-
         // Below var checks how many bytes of DATA we read, not metadata
         // thus we substract buf_idx since it now stores metadata count
         let mut data_bytes_read = bytes_read - buf_idx;
         let mut bytes: Vec<u8> = Vec::new();
 
-        let result_vec: Vec<String> = Vec::new();
+        let mut result_vec: Vec<String> = Vec::new();
         // let mut ascii_count: usize = 0;
         let mut n_rows: usize = 0;
 
@@ -506,7 +512,9 @@ impl ColData<String>
                     dir_path
                 ).await?;
 
-                if is_break {break;}
+                if is_break {
+                    break;
+                }
             }
 
             let byte = buf
@@ -532,6 +540,7 @@ impl ColData<String>
                     curr_stage = ReadStage::DataStage;
 
                     bytes.clear();
+
                 }
             }
             else 
@@ -541,15 +550,9 @@ impl ColData<String>
                 if n_bytes == zstd_frame_size
                 {
                     let decoded_strings = ColData::<String>::_zstd_decode(&bytes)?;
-
                     // Each decoded string is a value for separate row
                     n_rows += decoded_strings.len();
-                    // ascii_count += decoded_strings
-                    //                 .iter()
-                    //                 .fold(0, |mut acc, s| {
-                    //                     acc += s.len(); 
-                    //                     acc
-                    //                 });
+                    result_vec.extend(decoded_strings);
 
                     // After reading one full zstd frame, we again need to read
                     // frame size, so we switch stage

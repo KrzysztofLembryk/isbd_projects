@@ -771,11 +771,13 @@ impl TableMetadata {
         return Ok(res_vec);
     }
 
-    pub async fn read_table(&self) -> Result<(QueryResult, i32), DbError> {
+    pub async fn read_table(&self) -> Result<(QueryResult, i32), DbError> 
+    {
         let mut row_count: Option<i32> = None;
         let mut q_res = QueryResult::new(0, vec![]);
 
         for col_meta in &self.columns {
+            // Prepare file_queue
             let mut file_queue: VecDeque<&str> = VecDeque::new();
 
             for path in &col_meta.c_files {
@@ -786,7 +788,8 @@ impl TableMetadata {
                 LogicalColType::INT64 => {
                     let col_data =
                         ColData::<i64>::read_from_file(file_queue, &self.table_dir_path).await?;
-
+                    debug!("Int col data: {}, has n_rows: {}", col_meta.c_name, col_data.n_rows());
+                    debug!("Int data: {:?}", col_data);
                     TableMetadata::check_row_count(
                         &mut row_count,
                         col_data.n_rows(),
@@ -801,6 +804,8 @@ impl TableMetadata {
                     let col_data =
                         ColData::<String>::read_from_file(file_queue, &self.table_dir_path).await?;
 
+                    debug!("Varchar col data: {}, has n_rows: {}", col_meta.c_name, col_data.n_rows());
+                    debug!("Varchar data: {:?}", col_data);
                     TableMetadata::check_row_count(
                         &mut row_count,
                         col_data.n_rows(),
