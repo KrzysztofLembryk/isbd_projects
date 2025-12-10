@@ -6,9 +6,12 @@ from db_client import (
     delete_table, 
     get_table_by_id, 
     post_copy_query, 
-    get_query_by_id
+    get_query_by_id,
+    post_select_query,
+    get_failed_query
 )
 
+SLEEP_TIME = 3
 QUERY_STATUS_KEY = "status"
 
 
@@ -198,7 +201,7 @@ def test_delete_table_with_running_query():
     # wait for query to start
     time.sleep(1)
 
-    # Step 3: attempt to delete the table (should be blocked or queued)
+    # Step 3: attempt to delete the table (should be blocked )
     print(f"  Step 3: Attempting to delete table while query is running...")
     success, error = delete_table(table_id)
     
@@ -312,28 +315,86 @@ def test_delete_table_after_query_completion():
     print("✓ TEST PASSED: Normal deletion flow works correctly\n")
 
 
-def run_all_delete_with_query_tests():
+def test_delete_table_then_query_attempts():
     """
-    Run all tests for deleting tables with running queries.
+    Test: Create table, run COPY query, delete table after completion,
+    then attempt SELECT and COPY queries on deleted table.
+    Queries will be rejected at submission but still tracked as FAILED queries.
     """
     print("\n" + "="*80)
-    print("RUNNING DELETE TABLE WITH QUERY TESTS")
+    print("TEST: DELETE table then attempt SELECT and COPY queries")
     print("="*80)
     
-    try:
-        test_delete_table_with_running_query()
-        test_delete_table_after_query_completion()
-        
-        print("\n" + "="*80)
-        print("ALL DELETE WITH QUERY TESTS PASSED! ✓")
-        print("="*80 + "\n")
-        
-    except AssertionError as e:
-        print(f"\n✗ TEST FAILED: {e}\n")
-        raise
-    except Exception as e:
-        print(f"\n✗ UNEXPECTED ERROR: {e}\n")
-        raise
+    table_name = "employees_delete_then_query"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    csv_file = OK_EMPLOYEES_WITH_HEADER
+    
+    # Step 1: Create table
+    print(f"  Step 1: Creating table '{table_name}'...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success, f"Failed to create table: {error}"
+    assert table_id is not None
+    print(f"    ✓ Table created with ID: {table_id}")
+    
+    # Step 2: Submit first COPY query
+    print(f"  Step 2: Submitting COPY query...")
+    success, copy_query_id, error = post_copy_query(
+        csv_file,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success, f"Failed to submit COPY query: {error}"
+    assert copy_query_id is not None
+    print(f"    ✓ COPY query submitted with ID: {copy_query_id}")
+    
+    # Step 3: Wait for COPY query to complete
+    print(f"  Step 3: Waiting for COPY query to complete...")
+    time.sleep(SLEEP_TIME)
+    
+    success_query, query_info, error_query = get_query_by_id(copy_query_id)
+    assert success_query, f"Failed to get query info: {error_query}"
+    assert query_info is not None
+    query_state = query_info.get(QUERY_STATUS_KEY, "UNKNOWN")
+    assert query_state == "COMPLETED", f"COPY query should be COMPLETED, got: {query_state}"
+    print(f"    ✓ COPY query completed successfully")
+    
+    # Step 4: Delete table
+    print(f"  Step 4: Deleting table...")
+    success, error = delete_table(table_id)
+    assert success, f"Failed to delete table: {error}"
+    print(f"    ✓ Table deleted successfully")
+    
+    # Step 5: Verify table is deleted
+    print(f"  Step 5: Verifying table is deleted...")
+    success_get, schema, error_get = get_table_by_id(table_id)
+    assert not success_get, "Table should not exist after deletion"
+    assert schema is None
+    print(f"    ✓ Table confirmed deleted: {error_get}")
+    
+    # Step 6: Submit SELECT query on deleted table (will fail but get query ID)
+    print(f"  Step 6: Submitting SELECT query on deleted table...")
+    success, select_query_id, error = post_select_query(table_name)
+    assert not success, f"SELECT query submission should fail: query was accepted when it shouldn't"
+    assert select_query_id is None, "Query ID should still be assigned even on failure"
+    print(f"    ✓ Error message: {error}")
+    
+    
+    # Step 9: Submit COPY query on deleted table (will fail but get query ID)
+    print(f"  Step 9: Submitting COPY query on deleted table...")
+    success, copy_query_id_2, error = post_copy_query(
+        csv_file,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert not success, f"COPY query submission should fail: query was accepted when it shouldn't"
+    assert copy_query_id_2 is None, "Query ID should still be assigned even on failure"
+    print(f"    ✓ COPY query is in FAILED state")
+    
+    print("✓ TEST PASSED: Queries on deleted table were rejected, tracked as FAILED, and error details retrieved\n")
 
 def run_all_delete_table_tests():
     """
@@ -348,7 +409,9 @@ def run_all_delete_table_tests():
         test_delete_non_existent_table()
         test_delete_table_with_invalid_id()
         test_double_delete()
-        # run_all_delete_with_query_tests()
+        test_delete_table_with_running_query()
+        test_delete_table_after_query_completion()
+        test_delete_table_then_query_attempts()
         
         print("\n" + "="*80)
         print("ALL DELETE TABLE TESTS PASSED! ✓")

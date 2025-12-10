@@ -11,7 +11,7 @@ use uuid::Uuid;
 use tokio::sync::mpsc::{UnboundedSender};
 use std::io::ErrorKind as err_kind;
 use std::collections::HashMap;
-use log::{info, debug};
+use log::{debug, info, warn};
 
 #[cfg(test)]
 #[path = "../tests/manager/test_db_manager.rs"]
@@ -188,6 +188,7 @@ impl DbManager
                 new_query.update_status(QueryStatus::FAILED);
                 self.query_store.insert_query(new_query)?;
 
+                warn!("post_query: posted query failed: {}", e);
                 return Err(e);
             }
         }
@@ -455,6 +456,7 @@ impl DbManager
         match q_res
         {
             WorkerMsgRes::SelectRes(s_res) => {
+                warn!("SELECT query result: {:?}", s_res);
                 query_store.store_query_result(
                     &query_id,
                     s_res

@@ -208,7 +208,6 @@ impl QueryWorker
             };
 
             let csv_vals_vec: Vec<&str> = record.iter().collect();
-            debug!("csv row: {:?}", csv_vals_vec);
             match dest_cols
             {
                 None => {
@@ -282,7 +281,6 @@ impl QueryWorker
                 for batch in &mut batches
                 {
                     batch.clear_batch();
-                    debug!("batch after clear: {:?}", batch);
                 }
 
             }
@@ -373,7 +371,6 @@ impl QueryWorker
                         }
                     };
 
-                    debug!("Saving VarChar to file, batch: {:?}", s_batch.values());
                     col_data.save_to_file(s_batch.values()).await?;
                 }
             }
@@ -440,7 +437,6 @@ impl QueryWorker
                 },
                 DataColumn::Varchar(s_vec) => {
                     // val is alread a string
-                    debug!("pushing to str batch value: {}", val);
                     s_vec.push(*val);
                 }
             }

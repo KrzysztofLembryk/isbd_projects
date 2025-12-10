@@ -2,6 +2,7 @@ import time
 from csv_names import (
     OK_EMPLOYEES_WITH_HEADER,
     OK_EMPLOYEES_NO_HEADER,
+    OK_LARGE_EMPLOYEES,
     WRONG_EMPLOYEES_WRONG_COLUMN_NAME,
     WRONG_EMPLOYEES_NO_HEADER_LESS_COLUMNS,
     WRONG_EMPLOYEES_NO_HEADER_MORE_COLUMNS,
@@ -658,6 +659,110 @@ def test_copy_query_sequential_execution():
     
     delete_table(table_id)
 
+def test_copy_query_500_rows_file():
+    """
+    Test 14: COPY query with 500 rows CSV file.
+    Submit 10 SELECT queries after COPY - all should succeed after timeout.
+    """
+    print("\n" + "="*80)
+    print("TEST 14: COPY query - 500 rows with multiple SELECT queries")
+    print("="*80)
+    
+    table_name = "employees_large"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    # Submit COPY query with large file
+    print("  Submitting COPY query for 500 rows...")
+    success, copy_query_id, error = post_copy_query(
+        OK_LARGE_EMPLOYEES,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and copy_query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for COPY query to complete...")
+    time.sleep(SLEEP_TIME + 2)
+    # Submit 10 SELECT queries immediately
+    print("  Submitting 10 SELECT queries immediately...")
+    select_query_ids = []
+    for i in range(10):
+        success, select_query_id, error = post_select_query(table_name)
+        assert success and select_query_id, f"Failed to submit SELECT query {i+1}: {error}"
+        select_query_ids.append(select_query_id)
+    print(f"    ✓ Submitted {len(select_query_ids)} SELECT queries")
+    
+    # Check COPY query status
+    print("  Checking COPY query status...")
+    success, copy_info, error = get_query_by_id(copy_query_id)
+    assert success and copy_info, f"Failed to get COPY query info: {error}"
+    assert copy_info[QUERY_STATUS_KEY] == "COMPLETED", \
+        f"COPY query should be COMPLETED, got: {copy_info[QUERY_STATUS_KEY]}"
+    print("    ✓ COPY query completed")
+    
+    # Wait for SELECT queries to complete
+    print("  Waiting for SELECT queries to complete...")
+    time.sleep(SLEEP_TIME)
+    
+    # Verify all 10 SELECT queries completed successfully
+    print("  Verifying all SELECT queries completed...")
+    for i, select_query_id in enumerate(select_query_ids):
+        success, query_info, error = get_query_by_id(select_query_id)
+        assert success and query_info, f"Failed to get SELECT query {i+1} info: {error}"
+        assert query_info[QUERY_STATUS_KEY] == "COMPLETED", \
+            f"SELECT query {i+1} should be COMPLETED, got: {query_info[QUERY_STATUS_KEY]}"
+    print(f"    ✓ All {len(select_query_ids)} SELECT queries completed")
+    
+    # Fetch and verify results from first SELECT query
+    print("  Fetching results from first SELECT query...")
+    success, result, error = get_query_result(select_query_ids[0], row_limit=500)
+    assert success and result, f"Failed to get result: {error}"
+    
+    # Verify data
+    assert result["rowCount"] == 500, \
+        f"Expected 500 rows, got: {result['rowCount']}"
+    assert len(result["columns"]) == 3, \
+        f"Expected 3 columns, got: {len(result['columns'])}"
+    
+    print(f"    ✓ Data verified: {result['rowCount']} rows, {len(result['columns'])} columns")
+    
+    # Verify data pattern (every 50 rows should have same name/salary)
+    # Columns are returned as arrays in the same order as table definition:
+    # [emp_id_values, name_values, salary_values]
+    print("  Verifying data pattern (repeated rows)...")
+    emp_id_values = result["columns"][0]
+    name_values = result["columns"][1]
+    salary_values = result["columns"][2]
+    
+    # Check first 50 rows have same name and salary
+    if len(name_values) >= 50:
+        first_name = name_values[0]
+        first_salary = salary_values[0]
+        
+        for i in range(50):
+            assert name_values[i] == first_name, \
+                f"Row {i} name should match first row"
+            assert salary_values[i] == first_salary, \
+                f"Row {i} salary should match first row"
+        
+        print("    ✓ Data pattern verified (first 50 rows have same name/salary)")
+    
+    # Verify emp_id is sequential
+    for i in range(min(100, len(emp_id_values))):
+        assert emp_id_values[i] == i + 1, \
+            f"emp_id at index {i} should be {i+1}, got {emp_id_values[i]}"
+    print("    ✓ emp_id sequence verified")
+    
+    print("✓ TEST 14 PASSED\n")
+    
+    delete_table(table_id)
 
 
 def run_all_copy_query_tests():
@@ -669,19 +774,20 @@ def run_all_copy_query_tests():
     print("="*80)
     
     try:
-        # test_copy_query_success()
-        # test_copy_query_wrong_column_name()
-        # test_copy_query_no_header_less_columns()
-        # test_copy_query_no_header_more_columns()
-        # test_copy_query_with_header_less_columns()
-        # test_copy_query_with_header_more_columns()
-        # test_copy_query_str_instead_of_int()
-        # test_copy_query_too_many_values_in_row()
-        # test_copy_query_too_few_values_in_row()
-        # test_copy_query_only_header()
-        # test_copy_query_empty_file()
-        # test_copy_query_non_existent_file()
+        test_copy_query_success()
+        test_copy_query_wrong_column_name()
+        test_copy_query_no_header_less_columns()
+        test_copy_query_no_header_more_columns()
+        test_copy_query_with_header_less_columns()
+        test_copy_query_with_header_more_columns()
+        test_copy_query_str_instead_of_int()
+        test_copy_query_too_many_values_in_row()
+        test_copy_query_too_few_values_in_row()
+        test_copy_query_only_header()
+        test_copy_query_empty_file()
+        test_copy_query_non_existent_file()
         test_copy_query_sequential_execution()
+        test_copy_query_500_rows_file()  
         
         print("\n" + "="*80)
         print("ALL COPY QUERY TESTS PASSED! ✓")

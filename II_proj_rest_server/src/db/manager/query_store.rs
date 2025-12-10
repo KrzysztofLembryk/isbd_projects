@@ -108,7 +108,6 @@ impl QueryStore
 
     pub fn store_query_result(&mut self, q_id: &Uuid, q_res: QueryResult)
     {
-        debug!("Query result that is being stored: {:?}", q_res);
         let _ = self.queries_results.insert(*q_id, q_res);
     }
 

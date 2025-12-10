@@ -8,6 +8,7 @@ CSV_DIR = "./csvs_for_tests/"
 # Employees table CSVs (20 rows, 3 columns: emp_id, name, salary)
 OK_EMPLOYEES_WITH_HEADER = CSV_DIR + "ok_employees_with_header.csv"
 OK_EMPLOYEES_NO_HEADER = CSV_DIR + "ok_employees_no_header.csv"
+OK_LARGE_EMPLOYEES = CSV_DIR + "ok_large_employees_500.csv"
 
 # ============================================================================
 # ERROR CASE CSV FILES
