@@ -34,3 +34,4 @@ WRONG_EMPLOYEES_TOO_FEW_VALUES_IN_ROW = CSV_DIR + "wrong_employees_too_few_value
 # Edge cases
 WRONG_EMPLOYEES_ONLY_HEADER = CSV_DIR + "wrong_employees_only_header.csv"
 WRONG_EMPLOYEES_EMPTY = CSV_DIR + "wrong_employees_empty.csv"
+WRONG_EMPLOYEES_NON_EXISTENT_FILE = CSV_DIR + "this_file_does_not_exist.csv"

@@ -1,1 +1,1 @@
-{"table_count":0,"tables_metadata":{},"db_data_dir_path":"./db_data"}
+{"table_count":1,"tables_metadata":{"b3dcd22c-2fe5-42dd-91b7-708fa84a3f5b":{"table_name":"employees_empty_data","table_id":"b3dcd22c-2fe5-42dd-91b7-708fa84a3f5b","columns":[{"c_name":"emp_id","c_type":"INT64","c_files":[]},{"c_name":"name","c_type":"VARCHAR","c_files":[]},{"c_name":"salary","c_type":"INT64","c_files":[]}],"table_dir_path":"./db_data/b3dcd22c-2fe5-42dd-91b7-708fa84a3f5b_employees_empty_data"}},"db_data_dir_path":"./db_data"}

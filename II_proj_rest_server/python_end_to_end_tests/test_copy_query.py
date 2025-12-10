@@ -11,7 +11,8 @@ from csv_names import (
     WRONG_EMPLOYEES_TOO_MANY_VALUES_IN_ROW,
     WRONG_EMPLOYEES_TOO_FEW_VALUES_IN_ROW,
     WRONG_EMPLOYEES_ONLY_HEADER,
-    WRONG_EMPLOYEES_EMPTY
+    WRONG_EMPLOYEES_EMPTY,
+    WRONG_EMPLOYEES_NON_EXISTENT_FILE,
 )
 from db_client import (
     put_table, 
@@ -472,7 +473,6 @@ def test_copy_query_only_header():
     
     delete_table(table_id)
 
-
 def test_copy_query_empty_file():
     """
     Test 11: COPY query with completely empty CSV file (should fail).
@@ -514,6 +514,46 @@ def test_copy_query_empty_file():
     
     delete_table(table_id)
 
+def test_copy_query_non_existent_file():
+    """
+    Test 12: COPY query with non-existent CSV file (should fail).
+    """
+    print("\n" + "="*80)
+    print("TEST 12: COPY query - non-existent file")
+    print("="*80)
+    
+    table_name = "employees_no_file"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with non-existent file...")
+    success, query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_NON_EXISTENT_FILE,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for query to fail...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    print("  ✓ Query correctly failed")
+    print("✓ TEST 12 PASSED\n")
+    
+    delete_table(table_id)
 
 def run_all_copy_query_tests():
     """
@@ -524,17 +564,18 @@ def run_all_copy_query_tests():
     print("="*80)
     
     try:
-        # test_copy_query_success()
-        # test_copy_query_wrong_column_name()
-        # test_copy_query_no_header_less_columns()
-        # test_copy_query_no_header_more_columns()
-        # test_copy_query_with_header_less_columns()
-        # test_copy_query_with_header_more_columns()
-        # test_copy_query_str_instead_of_int()
-        # test_copy_query_too_many_values_in_row()
-        # test_copy_query_too_few_values_in_row()
+        test_copy_query_success()
+        test_copy_query_wrong_column_name()
+        test_copy_query_no_header_less_columns()
+        test_copy_query_no_header_more_columns()
+        test_copy_query_with_header_less_columns()
+        test_copy_query_with_header_more_columns()
+        test_copy_query_str_instead_of_int()
+        test_copy_query_too_many_values_in_row()
+        test_copy_query_too_few_values_in_row()
         test_copy_query_only_header()
         test_copy_query_empty_file()
+        test_copy_query_non_existent_file()
         
         print("\n" + "="*80)
         print("ALL COPY QUERY TESTS PASSED! ✓")
