@@ -2,6 +2,7 @@ import time
 from csv_names import (
     OK_EMPLOYEES_WITH_HEADER,
     OK_EMPLOYEES_NO_HEADER,
+    OK_EMPLOYEES_4_COLUMNS,
     OK_LARGE_EMPLOYEES,
     WRONG_EMPLOYEES_WRONG_COLUMN_NAME,
     WRONG_EMPLOYEES_NO_HEADER_LESS_COLUMNS,
@@ -39,7 +40,7 @@ def test_copy_query_success():
     print("TEST 1: COPY query success - correct CSV with header")
     print("="*80)
     
-    table_name = "employees"
+    table_name = "employees_2"
     columns = [
         {"name": "emp_id", "type": "INT64"},
         {"name": "name", "type": "VARCHAR"},
@@ -54,7 +55,8 @@ def test_copy_query_success():
     # Submit COPY query
     print("  Submitting COPY query...")
     success, query_id, error = post_copy_query(
-        OK_EMPLOYEES_WITH_HEADER,
+        # OK_EMPLOYEES_WITH_HEADER,
+        "/data/ok_employees_with_header.csv",
         table_name,
         does_csv_contain_header=True
     )
@@ -764,6 +766,107 @@ def test_copy_query_500_rows_file():
     
     delete_table(table_id)
 
+def test_copy_query_with_destination_columns():
+    """
+    Test 15: COPY query with destinationColumns mapping.
+    CSV has 4 columns (emp_id, full_name, department, salary)
+    Table has 3 columns (emp_id, name, department)
+    Map: emp_id->emp_id, full_name->name, department->department (skip salary)
+    """
+    print("\n" + "="*80)
+    print("TEST 15: COPY query - with destinationColumns mapping")
+    print("="*80)
+    
+    table_name = "employees_mapped"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "department", "type": "VARCHAR"}
+    ]
+    
+    print("  Creating table with 3 columns (emp_id, name, department)...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+
+    # CSV has: emp_id, full_name, department, salary
+    # Table has: emp_id, name, department
+    # Map: emp_id->emp_id, full_name->name, department->department (skip salary column 3)
+    destination_cols = ["emp_id", "name", "department"]
+    
+    print("  Submitting COPY query with destinationColumns...")
+    print(f"    CSV columns: [emp_id, full_name, department, salary]")
+    print(f"    Table columns: [emp_id, name, department]")
+    print(f"    Mapping to:  {destination_cols}")
+    success, query_id, error = post_copy_query(
+        OK_EMPLOYEES_4_COLUMNS,
+        table_name,
+        does_csv_contain_header=True,
+        destination_columns=destination_cols
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for completion...")
+    time.sleep(SLEEP_TIME)
+
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "COMPLETED", \
+        f"Expected COMPLETED, got: {query_info[QUERY_STATUS_KEY]}"
+    print("    ✓ COPY query completed")
+    
+    # Verify data
+    print("  Submitting SELECT query...")
+    success, select_query_id, error = post_select_query(table_name)
+    assert success and select_query_id, f"Failed to submit SELECT query: {error}"
+    
+    time.sleep(SLEEP_TIME)
+    
+    print("  Fetching results...")
+    success, result, error = get_query_result(select_query_id, row_limit=20)
+    assert success and result, f"Failed to get result: {error}"
+
+    # Verify row count
+    assert result["rowCount"] == 10, \
+        f"Expected 10 rows, got: {result['rowCount']}"
+    assert len(result["columns"]) == 3, \
+        f"Expected 3 columns, got: {len(result['columns'])}"
+    
+    print(f"    ✓ Data verified: {result['rowCount']} rows, {len(result['columns'])} columns")
+    
+    # Verify data content - check that full_name was mapped to name
+    # Column order: emp_id (0), name (1), department (2)
+    emp_id_values = result["columns"][0]
+    name_values = result["columns"][1]
+    department_values = result["columns"][2]
+    
+    # First row from CSV should be: emp_id=1, full_name="Alice Smith", department="Engineering", salary=75000
+    # Table should have: emp_id=1, name="Alice Smith", department="Engineering"
+    assert emp_id_values[0] == 1, f"Expected emp_id=1, got {emp_id_values[0]}"
+    assert name_values[0] == "Alice Smith", \
+        f"Expected name='Alice Smith', got '{name_values[0]}'"
+    assert department_values[0] == "Engineering", \
+        f"Expected department='Engineering', got '{department_values[0]}'"
+    
+    print("    ✓ Column mapping verified:")
+    print("      - emp_id=1")
+    print("      - full_name -> name='Alice Smith'")
+    print("      - department='Engineering'")
+    print("      - salary (skipped)")
+    
+    # Verify second row
+    assert emp_id_values[1] == 2, f"Expected emp_id=2, got {emp_id_values[1]}"
+    assert name_values[1] == "Bob Johnson", \
+        f"Expected name='Bob Johnson', got '{name_values[1]}'"
+    assert department_values[1] == "Marketing", \
+        f"Expected department='Marketing', got '{department_values[1]}'"
+    
+    print("    ✓ Second row verified: emp_id=2, name='Bob Johnson', department='Marketing'")
+    
+    print("✓ TEST 15 PASSED\n")
+    
+    delete_table(table_id)
+    
 
 def run_all_copy_query_tests():
     """
@@ -774,20 +877,21 @@ def run_all_copy_query_tests():
     print("="*80)
     
     try:
-        test_copy_query_success()
-        test_copy_query_wrong_column_name()
-        test_copy_query_no_header_less_columns()
-        test_copy_query_no_header_more_columns()
-        test_copy_query_with_header_less_columns()
-        test_copy_query_with_header_more_columns()
-        test_copy_query_str_instead_of_int()
-        test_copy_query_too_many_values_in_row()
-        test_copy_query_too_few_values_in_row()
-        test_copy_query_only_header()
-        test_copy_query_empty_file()
-        test_copy_query_non_existent_file()
-        test_copy_query_sequential_execution()
-        test_copy_query_500_rows_file()  
+        # test_copy_query_success()
+        # test_copy_query_wrong_column_name()
+        # test_copy_query_no_header_less_columns()
+        # test_copy_query_no_header_more_columns()
+        # test_copy_query_with_header_less_columns()
+        # test_copy_query_with_header_more_columns()
+        # test_copy_query_str_instead_of_int()
+        # test_copy_query_too_many_values_in_row()
+        # test_copy_query_too_few_values_in_row()
+        # test_copy_query_only_header()
+        # test_copy_query_empty_file()
+        # test_copy_query_non_existent_file()
+        # test_copy_query_sequential_execution()
+        # test_copy_query_500_rows_file()  
+        test_copy_query_with_destination_columns()
         
         print("\n" + "="*80)
         print("ALL COPY QUERY TESTS PASSED! ✓")

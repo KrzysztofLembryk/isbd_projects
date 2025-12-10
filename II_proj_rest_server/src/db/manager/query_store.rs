@@ -6,8 +6,6 @@ use std::collections::VecDeque;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use log::{debug};
-
 pub struct QueryStore
 {
     queries: HashMap<Uuid, Query>,

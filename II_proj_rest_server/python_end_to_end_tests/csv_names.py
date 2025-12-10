@@ -9,6 +9,7 @@ CSV_DIR = "./csvs_for_tests/"
 OK_EMPLOYEES_WITH_HEADER = CSV_DIR + "ok_employees_with_header.csv"
 OK_EMPLOYEES_NO_HEADER = CSV_DIR + "ok_employees_no_header.csv"
 OK_LARGE_EMPLOYEES = CSV_DIR + "ok_large_employees_500.csv"
+OK_EMPLOYEES_4_COLUMNS = CSV_DIR + "ok_employees_with_header_4_col.csv"
 
 # ============================================================================
 # ERROR CASE CSV FILES

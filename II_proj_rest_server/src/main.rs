@@ -64,7 +64,7 @@ async fn main() -> std::io::Result<()>
             .service(get_failed_query)
             .service(get_sys_info)
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(("0.0.0.0", 8080))?
     .run()
     .await?;
 

@@ -240,16 +240,16 @@ impl QueryWorker
                             )
                         )
                     }
-                    if csv_vals_vec.len() != dest_cols.len()
-                    {
-                        return Err(
-                            DbError::CsvError(
-                                format!(
-                                    "We read a row from csv (dest_cols set) that has different nbr of columns ({}) than our dest cols ({})", csv_vals_vec.len(), dest_cols.len()
-                                )
-                            )
-                        )
-                    }
+                    // if csv_vals_vec.len() != dest_cols.len()
+                    // {
+                    //     return Err(
+                    //         DbError::CsvError(
+                    //             format!(
+                    //                 "We read a row from csv (dest_cols set) that has different nbr of columns ({}) than our dest cols ({})", csv_vals_vec.len(), dest_cols.len()
+                    //             )
+                    //         )
+                    //     )
+                    // }
 
                     // Since we have dest_cols, we will do mapping so that at
                     // 0 position of mapped_csv_vals we have a value for column
@@ -387,7 +387,8 @@ impl QueryWorker
     {
         // dest_cols might have greater length than nbr of table columns
         // but we will take only first columns().len values
-        if csv_row.len() != dest_cols.len() || dest_cols.len() < n_table_cols
+        // if csv_row.len() != dest_cols.len() || dest_cols.len() < n_table_cols
+        if dest_cols.len() < n_table_cols
         {
             return Err(DbError::InternalDbError(
                 format!("QueryWorker::map_csv_row_to_table_order - csv_row.len != dest_cols.len or dest_cols < n_table_cols - at this point this should never happen since these things should've been checked earlier - DB in corrupted state")
@@ -584,7 +585,7 @@ impl QueryWorker
                     // IF headers.len > columns.len we will use only columns.len
                     // from dest_cols
                     if headers.len() < columns.len() 
-                    || headers.len() != dest_cols.len()
+                    // || headers.len() != dest_cols.len() // ??
                     {
                         return Err(
                             DbError::WrongSize(

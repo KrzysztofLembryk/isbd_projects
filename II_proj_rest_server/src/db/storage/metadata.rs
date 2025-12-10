@@ -96,6 +96,12 @@ impl DbMetadata {
     /// When saving we overwrite whole previous metadata file
     /// This method is run when server ends its execution.
     pub async fn save_to_file(&self) -> Result<(), DbError> {
+        let metadata_path = std::path::Path::new(&self.metadata_file_path);
+        
+        if let Some(parent_dir) = metadata_path.parent() {
+            t_fs::create_dir_all(parent_dir).await?;
+        }
+
         let mut f = t_fs::File::create(&self.metadata_file_path).await?;
         let buf =
             serde_json::to_vec(&self).or_else(|e| return Err(DbError::Other(e.to_string())))?;
