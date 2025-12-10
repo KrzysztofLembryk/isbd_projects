@@ -2,7 +2,7 @@ use crate::db::manager::messages::{DbClientMsg, ResMsg};
 use crate::db::db_client::DbClient;
 use crate::routes::execute_db_cmd::execute_db_command;
 use crate::schemas::query::{ExecuteQueryRequest};
-use crate::schemas::error::{Error};
+use crate::schemas::error::{Error, MultipleProblemsError};
 use actix_web::{HttpResponse, Responder, get, post, web};
 use uuid::Uuid;
 use log::{info};
@@ -34,10 +34,10 @@ async fn get_queries(
                     HttpResponse::Ok()
                         .json(queries),
                 _ => HttpResponse::InternalServerError()
-                        .json("get_tables: got Wrong message from db"),
+                        .json(Error::new("get_queries: INTERNAL DB ERROR: got Wrong message from db")),
             }
         },
-        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json(Error::new("get_queries: INTERNAL DB ERROR : db closed its side of channel, couldnt receive data from db"))
     };
 }
 
@@ -71,10 +71,10 @@ async fn get_query_info(
                     HttpResponse::NotFound()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
-                        .json("get_tables: got Wrong message from db"),
+                        .json(Error::new("get_query_indo: INTERNAL DB ERROR : got Wrong message from db")),
             }
         },
-        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json(Error::new("get_query_indo: INTERNAL DB ERROR : db closed its side of channel, couldnt receive data from db"))
     };
 }
 
@@ -105,12 +105,21 @@ async fn post_query(
                         .json(id),
                 ResMsg::ResPostQuery(Err(e)) => 
                     HttpResponse::BadRequest()
-                        .json(Error::new(&format!("{}", e))),
+                        .json(MultipleProblemsError::new_with_one_problem(
+                            &format!("{}", e),
+                            "post_query context"
+                        )),
                 _ => HttpResponse::InternalServerError()
-                        .json("get_tables: got Wrong message from db"),
+                        .json(MultipleProblemsError::new_with_one_problem(
+                            "post_query: got Wrong message from db",
+                            "INTERNAL DB ERROR"
+                        )),
             }
         },
-        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json(MultipleProblemsError::new_with_one_problem(
+            "post_query: db closed its side of channel, couldnt receive data from db",
+            "INTERNAL DB ERROR"
+        ))
     };
 }
 

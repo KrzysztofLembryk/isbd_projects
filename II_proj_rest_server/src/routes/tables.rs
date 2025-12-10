@@ -1,7 +1,7 @@
 use crate::db::db_client::DbClient;
 use crate::db::storage::metadata::TableId;
 use crate::schemas::table::{TableSchema};
-use crate::schemas::error::{Error};
+use crate::schemas::error::{Error, MultipleProblemsError};
 use crate::db::manager::messages::{DbClientMsg, ResMsg};
 use crate::routes::execute_db_cmd::execute_db_command;
 
@@ -73,10 +73,10 @@ async fn get_table_details(
                     HttpResponse::NotFound()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
-                        .json("get_tables: got Wrong message from db"),
+                        .json(Error::new("get_table_details: got Wrong message from db")),
             }
         },
-        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json(Error::new("get_table_details: db closed its side of channel, couldnt receive data from db"))
     };
 }
 
@@ -107,10 +107,10 @@ async fn delete_table(
                     HttpResponse::NotFound()
                         .json(Error::new(&format!("{}", e))),
                 _ => HttpResponse::InternalServerError()
-                        .json("delete_table: got Wrong message from db"),
+                        .json(Error::new("delete_table: got Wrong message from db")),
             }
         },
-        None => HttpResponse::InternalServerError().json("delete_table: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json(Error::new("delete_table: db closed its side of channel, couldnt receive data from db"))
     };
 }
 
@@ -123,7 +123,10 @@ async fn put_table(
     info!("Putting new table: '{}'", table_schema.name());
     if let Err(validation_err) = table_schema.validate()
     {
-        return HttpResponse::BadRequest().json(Error::new(&format!("Table schema didnt pass validation: {}", validation_err)));
+        return HttpResponse::BadRequest().json(MultipleProblemsError::new_with_one_problem(
+            &format!("Table schema didnt pass validation: {}", validation_err),
+            "put_table failed"
+        ));
     }
 
     let conn_id = Uuid::new_v4();
@@ -144,11 +147,21 @@ async fn put_table(
                         .json(id.to_string()),
                 ResMsg::ResPutTable(Err(e)) => 
                     HttpResponse::BadRequest()
-                        .json(Error::new(&format!("{}", e))),
+                        .json(MultipleProblemsError::new_with_one_problem(
+                            &format!("{}", e),
+                            "no context"
+                        )),
                 _ => HttpResponse::InternalServerError()
-                        .json(Error::new("get_tables: got Wrong message from db")),
+                        .json(MultipleProblemsError::new_with_one_problem(
+                            "put_tables: got Wrong message from db",
+                            "Internal DB Error"
+                        )),
             }
         },
-        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json(
+            MultipleProblemsError::new_with_one_problem(
+                "put_tables: db closed its side of channel, couldnt receive data from db", 
+                "DB in corrupted state"
+            ))
     };
 }

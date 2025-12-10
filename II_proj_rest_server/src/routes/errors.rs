@@ -59,9 +59,10 @@ async fn get_failed_query(
                     }
                 }
                 _ => HttpResponse::InternalServerError()
-                        .json("get_failed_query: got Wrong message from db"),
+                        .json(Error::new("get_failed_query: INTERNAL DB ERROR : got Wrong message from db")),
             }
         },
-        None => HttpResponse::InternalServerError().json("get_tables: db closed its side of channel, couldnt receive data from db")
+        None => HttpResponse::InternalServerError().json(Error::new(
+            "get_failed_query: INTERNAL DB ERROR : db closed its side of channel, couldnt receive data from db"))
     };
 }

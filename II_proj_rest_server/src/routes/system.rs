@@ -10,7 +10,7 @@ async fn get_sys_info() -> impl Responder
                 interface_version: String::from("1.0.1"),
                 version: String::from("1.0.0"),
                 author: String::from("Krzysztof Lembryk"),
-                uptime: 0
+                uptime: 1
             }
         );
 }
