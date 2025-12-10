@@ -19,8 +19,8 @@ mod test_db_manager;
 
 struct DbPaths
 {
-    metadata_file_path: String, 
-    data_dir_path: String,
+    _metadata_file_path: String, 
+    _data_dir_path: String,
 }
 
 impl DbPaths
@@ -32,7 +32,7 @@ impl DbPaths
     {
         DbPaths 
         { 
-            metadata_file_path: String::from(metadata_file_path), data_dir_path: String::from(data_dir_path)
+            _metadata_file_path: String::from(metadata_file_path), _data_dir_path: String::from(data_dir_path)
         }
     }
 }

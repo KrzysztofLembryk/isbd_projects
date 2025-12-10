@@ -112,7 +112,7 @@ pub struct QueryCompletionMsg
 {
     query_id: Uuid,
     table_id: Uuid, 
-    n_rows: i32,
+    _n_rows: i32,
     res: WorkerMsgRes,
 }
 
@@ -125,7 +125,7 @@ impl QueryCompletionMsg
         res: WorkerMsgRes
     ) -> QueryCompletionMsg
     {
-        QueryCompletionMsg { query_id, table_id, n_rows, res }
+        QueryCompletionMsg { query_id, table_id, _n_rows: n_rows, res }
     }
 
     pub fn table_id(&self) -> Uuid

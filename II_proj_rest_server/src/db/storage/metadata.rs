@@ -271,7 +271,7 @@ impl DbMetadata {
         }
 
         let columns =
-            table_schema_into_columns_vec(&table_schema, &table_id, &self.db_data_dir_path)?;
+            table_schema_into_columns_vec(&table_schema)?;
 
         // Only if we successfully create columns metadata we insert new table
         // to our metadata object
@@ -995,10 +995,7 @@ fn create_dir_path(db_data_dir_path: &str, table_id: &Uuid, table_name: &str) ->
 // TODO: probably we should make this not a function, but TableSchema method !!!
 fn table_schema_into_columns_vec(
     schema: &TableSchema,
-    table_id: &Uuid,
-    db_data_dir_path: &str,
 ) -> Result<Vec<ColMetadata>, DbError> {
-    let file_idx = 0;
     let mut columns: Vec<ColMetadata> = Vec::new();
 
     // If we have duplicate col_names we will just overwrite previously added column
@@ -1025,15 +1022,6 @@ fn table_schema_into_columns_vec(
                 name: col_name,
             });
         }
-
-        // File paths will be created when first copy query comes
-        // let file_path = create_file_path(
-        //     db_data_dir_path,
-        //     table_id,
-        //     schema.name(),
-        //     &col_name,
-        //     file_idx,
-        // );
 
         columns.push(ColMetadata {
             c_name: col_name.clone(),

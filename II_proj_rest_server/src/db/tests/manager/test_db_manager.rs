@@ -1,6 +1,6 @@
 use self::super::{DbManager, DbCmd};
 use crate::schemas::table::TableSchema;
-use crate::schemas::query::{AllowedQuery, SelectQuery, CopyQuery, QueryStatus};
+use crate::schemas::query::{AllowedQuery, SelectQuery, QueryStatus};
 use crate::schemas::column::Column;
 use crate::db::manager::messages::DbWorkerMsg;
 use crate::db::constants::LogicalColType;
@@ -14,7 +14,7 @@ const NBR_OF_DB_WORKERS: usize = 2;
 
 #[cfg(test)]
 mod db_manager {
-    use crate::db::manager::messages::WorkerMsgRes;
+    // use crate::db::manager::messages::WorkerMsgRes;
 
     use super::*;
     

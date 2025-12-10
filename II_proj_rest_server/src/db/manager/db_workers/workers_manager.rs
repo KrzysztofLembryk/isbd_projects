@@ -148,7 +148,7 @@ impl WorkersManager
 
 struct QueryWorkerHandler
 {
-    id: usize,
+    _id: usize,
     tx: UnboundedSender<DbWorkerMsg>,
     handle: JoinHandle<()>
 }
@@ -162,7 +162,7 @@ impl QueryWorkerHandler
 
         )>) -> QueryWorkerHandler
     {
-        QueryWorkerHandler {id, tx, handle}
+        QueryWorkerHandler {_id: id, tx, handle}
     }
 
     pub fn send_msg(&self, msg: DbWorkerMsg) -> Result<(), DbError>
