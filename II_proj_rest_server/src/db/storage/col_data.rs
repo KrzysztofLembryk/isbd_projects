@@ -295,6 +295,9 @@ impl ColData<i64>
         let mut result_vec: Vec<i64> = Vec::new();
         let mut min_val: i64 = 0;
         let mut n_rows: usize = 0;
+        let mut n_rows_in_batch: usize = 0;
+        let mut curr_batch_size: u16 = 0;
+        let mut read_stage = ReadStage::SizeStage;
 
         loop 
         {
@@ -322,33 +325,54 @@ impl ColData<i64>
                 ))?;
             bytes.push(*byte);
 
-            // If most significant bit is 0 it means that this is last byte
-            // in vle encoded sequence, so we need to decode it into i64
-            if byte & 0x80 == 0
+            match read_stage
             {
-                // delta encoding value is always first in sequence
-                let not_delta_encoding_base_value = !first_value;
-                let decoded_val = ColData::_decode_bytes(
-                                &mut first_value, 
-                                &mut bytes, 
-                                &mut min_val);
+                ReadStage::SizeStage => {
+                    if bytes.len() == 2
+                    {
+                        curr_batch_size = 
+                            u16::from_be_bytes([bytes[0], bytes[1]]);
+                        
+                        read_stage = ReadStage::DataStage;
+                        bytes.clear();
+                    }
+                },
+                ReadStage::DataStage => {
+                    // If most significant bit is 0 it means that this is last byte
+                    // in vle encoded sequence, so we need to decode it into i64
+                    if byte & 0x80 == 0
+                    {
+                        // delta encoding value is always first in sequence
+                        let not_delta_encoding_base_value = !first_value;
+                        let decoded_val = ColData::_decode_bytes(
+                                        &mut first_value, 
+                                        &mut bytes, 
+                                        &mut min_val);
 
-                // First value in a sequence is needed only for decoding,
-                // therefore we do not push it since it would destroy order
-                // of our data
-                if not_delta_encoding_base_value
-                {
-                    result_vec.push(decoded_val);
-                    n_rows += 1;
-                }
-                
-                // We need to ignore first values in each batch, thus such if
-                if not_delta_encoding_base_value && n_rows % BATCH_SIZE == 0
-                {
-                    // first value in ebery batch is delta encoding value
-                    first_value = true;
+                        bytes.clear();
+                        // First value in a sequence is needed only for 
+                        // decoding, therefore we do not push it since it would 
+                        // destroy order of our data
+                        if not_delta_encoding_base_value
+                        {
+                            result_vec.push(decoded_val);
+                            n_rows_in_batch += 1;
+                            n_rows += 1;
+
+                            if n_rows_in_batch == curr_batch_size as usize
+                            {
+                                // first two bytes in every batch is batch size
+                                // so after reading all data from current batch
+                                // we change read stage to size stage
+                                read_stage = ReadStage::SizeStage;
+                                n_rows_in_batch = 0;
+                                first_value = true;
+                            }
+                        }
+                    }
                 }
             }
+
             buf_idx += 1;
         }
 
@@ -377,8 +401,14 @@ impl ColData<i64>
 
         let mut f = self._get_file_handle().await?;
         let ints_encoded = ColData::_vle_encode(ints)?;
+        let rows_in_batch: u16 = ints.len() as u16;
 
-        f = self._do_the_save(&ints_encoded, f).await?;
+        let mut data_to_save = Vec::with_capacity(std::mem::size_of::<u16>() + ints_encoded.len());
+
+        data_to_save.extend_from_slice(&rows_in_batch.to_be_bytes());
+        data_to_save.extend_from_slice(&ints_encoded);
+        
+        f = self._do_the_save(&data_to_save, f).await?;
 
         self.file_handle = Some(f);
 
@@ -391,6 +421,7 @@ impl ColData<i64>
 
     fn _vle_encode(vals: &[i64]) -> Result<Vec<u8>, DbError>
     {
+        // delta_encoded_vec has size BATCH_SIZE + 1 if vals.len() == BATCH_SIZE
         let delta_encoded_vec = delta_encode(vals)?;
         let mut vle_encoded_vec: Vec<u8> = Vec::new();
 
@@ -426,7 +457,6 @@ impl ColData<i64>
             // First value might be negative, and is minimal value in Batch
             decoded_val = vle_decode_i(bytes);
 
-            bytes.clear();
             
             *min_val = decoded_val;
             *first_value = false;
@@ -438,7 +468,6 @@ impl ColData<i64>
             decoded_val = vle_decode_u(&bytes) as i64;
             decoded_val += *min_val;
 
-            bytes.clear();
         }
 
         decoded_val

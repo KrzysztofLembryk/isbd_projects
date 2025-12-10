@@ -8,11 +8,11 @@ const MB_1: usize = KB_1 * KB_1;
 // ############################################################################
 // ############################ BUFFER SIZES ##################################
 // ############################################################################
-
+const REAL_BATCH_SIZE: u16 = 3;
 /// Size of buffer we read data into
 pub const BUF_SIZE: usize = 64 * KB_1; 
 /// Number of rows we want to read in one go
-pub const BATCH_SIZE: usize = 3; 
+pub const BATCH_SIZE: usize = REAL_BATCH_SIZE as usize; 
 
 // ############################################################################
 // ########################### FILES CONSTANTS ################################

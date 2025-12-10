@@ -651,7 +651,7 @@ def test_copy_query_sequential_execution():
     success, result_2, error = get_query_result(select_query_id_2, row_limit=50)
     assert success and result_2, f"Failed to get result: {error}"
     assert result_2["rowCount"] == 2 * ROW_LIMIT, \
-        f"Expected 40 rows after both COPYs, got: {result_2['rowCount']}"
+        f"Expected 20 rows after both COPYs, got: {result_2['rowCount']}"
     print(f"    ✓ Table has {result_2['rowCount']} rows (both COPYs)")
     
     print("✓ TEST 13 PASSED\n")
