@@ -295,7 +295,6 @@ impl ColData<i64>
         let mut result_vec: Vec<i64> = Vec::new();
         let mut min_val: i64 = 0;
         let mut n_rows: usize = 0;
-        // let mut average: f64 = 0.0;
 
         loop 
         {
@@ -327,21 +326,26 @@ impl ColData<i64>
             // in vle encoded sequence, so we need to decode it into i64
             if byte & 0x80 == 0
             {
+                // delta encoding value is always first in sequence
+                let not_delta_encoding_base_value = !first_value;
                 let decoded_val = ColData::_decode_bytes(
                                 &mut first_value, 
                                 &mut bytes, 
                                 &mut min_val);
 
-                result_vec.push(decoded_val);
-
-                // average = ((average * n_rows as f64) + decoded_val as f64) 
-                //         / ((n_rows + 1) as f64);
-
-                n_rows += 1;
-                
-                if n_rows % BATCH_SIZE == 0
+                // First value in a sequence is needed only for decoding,
+                // therefore we do not push it since it would destroy order
+                // of our data
+                if not_delta_encoding_base_value
                 {
-                    // When we start new batch again first value might be negative
+                    result_vec.push(decoded_val);
+                    n_rows += 1;
+                }
+                
+                // We need to ignore first values in each batch, thus such if
+                if not_delta_encoding_base_value && n_rows % BATCH_SIZE == 0
+                {
+                    // first value in ebery batch is delta encoding value
                     first_value = true;
                 }
             }
@@ -352,8 +356,7 @@ impl ColData<i64>
             header: header,
             data: result_vec,
             n_rows: n_rows,
-            // result: ResType::IntColRes(average),
-            file_handle: None, // maybe better to store f?
+            file_handle: None, 
             first_time_saving: false,
         })
     }

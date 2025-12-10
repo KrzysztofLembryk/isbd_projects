@@ -10,20 +10,14 @@ pub fn delta_encode(batch: &[i64]) -> Result<Vec<i64>, DbError>
         ))?;
 
     let mut delta_encoded_vec: Vec<i64> = vec![min_val];
-    let mut first_encountered = true;
-
+    println!("pushing delta_encode min_val: {}", min_val);
     for elem in batch
     {
-        // When we encounter our min we skip adding it since we already did this
-        // before loop, but we skip ONLY ONCE, since we allow multiple same vals
-        if first_encountered && min_val == *elem
-        {
-            first_encountered = false;
-            continue;
-        }
+        println!("pushing: {}", elem);
         // since we have minimum, we can make all differences non-negative
         delta_encoded_vec.push(*elem - min_val);
     }
+    println!("delta_encoded_vec len: {}, vals: {:?}", delta_encoded_vec.len(), delta_encoded_vec);
 
     Ok(delta_encoded_vec)
 }

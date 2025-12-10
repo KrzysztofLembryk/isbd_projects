@@ -5,7 +5,7 @@ use crate::db::constants::LogicalColType;
 use std::collections::VecDeque;
 
 #[tokio::test]
-async fn test_save_to_file() {
+async fn test_save_to_file_str() {
     
     let dir_path = "./db_data";
     // let file_path = "./db_data/name_0";
@@ -38,8 +38,74 @@ async fn test_save_to_file() {
     col_data.save_to_file(&batch[3..=4]).await.unwrap();
 }
 
+
 #[tokio::test]
-async fn test_read_from_file() {
+async fn test_save_to_file_i64() {
+    
+    let dir_path = "./db_data";
+    let col_name = "int_test_col";
+    // let file_path = "./db_data/name_0";
+
+    let batch: Vec<i64> = vec![
+        2137, 69, 10, 20, 20000, 88000, 16, 273
+        ];
+
+    let col_file_id: u16 = 0;
+    let is_overflow = false;
+    let initial_size_of_data = 0;
+    let col_type = LogicalColType::INT64;
+
+    let header = ColHeader::new(
+        col_file_id,
+        col_type,
+        is_overflow,
+        initial_size_of_data,
+        String::from(col_name),
+        dir_path,
+    ).unwrap();
+
+    let mut col_data: ColData::<i64> = ColData::<i64>::new(header).unwrap();
+    
+    col_data.save_to_file(&batch[..3]).await.unwrap();
+    col_data.save_to_file(&batch[3..6]).await.unwrap();
+    col_data.save_to_file(&batch[6..=7]).await.unwrap();
+}
+
+
+#[tokio::test]
+async fn test_read_from_file_i64() {
+    
+    // Get the file path that was created
+    let dir_path = "./db_data";
+    let file_path = "./db_data/int_test_col_0";
+    
+    // Step 2: Create VecDeque with one file path
+    let mut file_paths = VecDeque::new();
+    file_paths.push_back(file_path);
+    
+    // Step 3: Read the data back from file
+    let col_data_read = ColData::<i64>::read_from_file(
+                            file_paths, 
+                            dir_path
+                        ).await.unwrap();
+
+    let expected_data: Vec<i64> = vec![
+        2137, 69, 10, 20, 20000, 88000, 16, 273
+        ];
+
+
+    assert_eq!(col_data_read.n_rows(), expected_data.len());
+    assert_eq!(&col_data_read.data, &expected_data);
+    println!("read data: {:?}", col_data_read);
+
+    // Remove the file after test
+    if std::fs::remove_file(file_path).is_err() {
+        eprintln!("Warning: failed to remove {}", file_path);
+    }
+}
+
+#[tokio::test]
+async fn test_read_from_file_str() {
     
     // Get the file path that was created
     let dir_path = "./db_data";

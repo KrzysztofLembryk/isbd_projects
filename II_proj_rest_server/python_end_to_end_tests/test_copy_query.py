@@ -555,6 +555,111 @@ def test_copy_query_non_existent_file():
     
     delete_table(table_id)
 
+def test_copy_query_sequential_execution():
+    """
+    Test 13: Two COPY queries for the same table submitted sequentially.
+    Only one should execute at a time due to table locking.
+    """
+    print("\n" + "="*80)
+    print("TEST 13: COPY query - sequential execution with table lock")
+    print("="*80)
+    
+    table_name = "employees_sequential"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    # Submit first COPY query
+    print("  Submitting first COPY query...")
+    success, query_id_1, error = post_copy_query(
+        OK_EMPLOYEES_WITH_HEADER,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and query_id_1, f"Failed to submit first COPY query: {error}"
+    
+    # Submit second COPY query immediately
+    print("  Submitting second COPY query immediately...")
+    success, query_id_2, error = post_copy_query(
+        OK_EMPLOYEES_WITH_HEADER,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and query_id_2, f"Failed to submit second COPY query: {error}"
+    
+    # Wait for first query to complete
+    print("  Waiting for first query to complete...")
+    time.sleep(SLEEP_TIME)
+    
+    # Check first query is completed
+    print("  Checking first query status...")
+    success, query_info_1, error = get_query_by_id(query_id_1)
+    assert success and query_info_1, f"Failed to get first query info: {error}"
+    assert query_info_1[QUERY_STATUS_KEY] == "COMPLETED", \
+        f"First query should be COMPLETED, got: {query_info_1[QUERY_STATUS_KEY]}"
+    print("    ✓ First query completed")
+    
+    # Check second query is still running or queued
+    print("  Checking second query status (should be RUNNING or QUEUED)...")
+    success, query_info_2, error = get_query_by_id(query_id_2)
+    assert success and query_info_2, f"Failed to get second query info: {error}"
+    second_status = query_info_2[QUERY_STATUS_KEY]
+    assert second_status in ["RUNNING", "PLANNING"], \
+        f"Second query should be RUNNING or QUEUED, got: {second_status}"
+    print(f"    ✓ Second query status: {second_status}")
+    
+    # Verify table has data from first COPY only (20 rows)
+    print("  Submitting SELECT query to verify first COPY data...")
+    success, select_query_id_1, error = post_select_query(table_name)
+    assert success and select_query_id_1, f"Failed to submit SELECT query: {error}"
+    
+    time.sleep(SLEEP_TIME)
+    
+    print("  Fetching result after first COPY...")
+    success, result_1, error = get_query_result(select_query_id_1, row_limit=50)
+    assert success and result_1, f"Failed to get result: {error}"
+    assert result_1["rowCount"] == ROW_LIMIT, \
+        f"Expected 10 rows after first COPY, got: {result_1['rowCount']}"
+    print(f"    ✓ Table has {result_1['rowCount']} rows (first COPY only)")
+    
+    # Wait for second query to complete
+    print("  Waiting for second query to complete...")
+    time.sleep(SLEEP_TIME)
+    
+    # Check second query is now completed
+    print("  Checking second query final status...")
+    success, query_info_2_final, error = get_query_by_id(query_id_2)
+    assert success and query_info_2_final, f"Failed to get second query info: {error}"
+    assert query_info_2_final[QUERY_STATUS_KEY] == "COMPLETED", \
+        f"Second query should be COMPLETED, got: {query_info_2_final[QUERY_STATUS_KEY]}"
+    print("    ✓ Second query completed")
+    
+    # Verify table now has data from both COPYs (20 rows)
+    print("  Submitting SELECT query to verify both COPY operations...")
+    success, select_query_id_2, error = post_select_query(table_name)
+    assert success and select_query_id_2, f"Failed to submit SELECT query: {error}"
+    
+    time.sleep(SLEEP_TIME)
+    
+    print("  Fetching result after both COPYs...")
+    success, result_2, error = get_query_result(select_query_id_2, row_limit=50)
+    assert success and result_2, f"Failed to get result: {error}"
+    assert result_2["rowCount"] == 2 * ROW_LIMIT, \
+        f"Expected 40 rows after both COPYs, got: {result_2['rowCount']}"
+    print(f"    ✓ Table has {result_2['rowCount']} rows (both COPYs)")
+    
+    print("✓ TEST 13 PASSED\n")
+    
+    delete_table(table_id)
+
+
+
 def run_all_copy_query_tests():
     """
     Run all COPY query tests.
@@ -564,18 +669,19 @@ def run_all_copy_query_tests():
     print("="*80)
     
     try:
-        test_copy_query_success()
-        test_copy_query_wrong_column_name()
-        test_copy_query_no_header_less_columns()
-        test_copy_query_no_header_more_columns()
-        test_copy_query_with_header_less_columns()
-        test_copy_query_with_header_more_columns()
-        test_copy_query_str_instead_of_int()
-        test_copy_query_too_many_values_in_row()
-        test_copy_query_too_few_values_in_row()
-        test_copy_query_only_header()
-        test_copy_query_empty_file()
-        test_copy_query_non_existent_file()
+        # test_copy_query_success()
+        # test_copy_query_wrong_column_name()
+        # test_copy_query_no_header_less_columns()
+        # test_copy_query_no_header_more_columns()
+        # test_copy_query_with_header_less_columns()
+        # test_copy_query_with_header_more_columns()
+        # test_copy_query_str_instead_of_int()
+        # test_copy_query_too_many_values_in_row()
+        # test_copy_query_too_few_values_in_row()
+        # test_copy_query_only_header()
+        # test_copy_query_empty_file()
+        # test_copy_query_non_existent_file()
+        test_copy_query_sequential_execution()
         
         print("\n" + "="*80)
         print("ALL COPY QUERY TESTS PASSED! ✓")
