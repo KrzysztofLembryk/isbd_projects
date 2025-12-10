@@ -5,7 +5,7 @@ use crate::schemas::query::{ExecuteQueryRequest};
 use crate::schemas::error::{Error};
 use actix_web::{HttpResponse, Responder, get, post, web};
 use uuid::Uuid;
-use log::{info, warn, debug, error};
+use log::{info};
 
 // TODO: remove code duplication by introducing helper functions/macro
 #[get("/queries")]

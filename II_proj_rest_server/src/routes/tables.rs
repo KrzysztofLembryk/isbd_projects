@@ -1,6 +1,6 @@
 use crate::db::db_client::DbClient;
 use crate::db::storage::metadata::TableId;
-use crate::schemas::table::{self, TableSchema};
+use crate::schemas::table::{TableSchema};
 use crate::schemas::error::{Error};
 use crate::db::manager::messages::{DbClientMsg, ResMsg};
 use crate::routes::execute_db_cmd::execute_db_command;
@@ -8,7 +8,7 @@ use crate::routes::execute_db_cmd::execute_db_command;
 use actix_web::{HttpResponse, Responder, delete, get, put, web};
 use uuid::Uuid;
 use validator::Validate;
-use log::{info, warn, debug, error};
+use log::{info};
 
 // TODO: remove code duplication by introducing helper functions/macro
 

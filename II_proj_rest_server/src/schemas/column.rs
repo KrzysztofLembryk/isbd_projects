@@ -1,8 +1,7 @@
-use actix_web::http::header::VARY;
 use serde;
 use std::fmt;
 use crate::db::constants::LogicalColType;
-use validator::{Validate, ValidationError};
+use validator::{Validate};
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub enum DataColumn

@@ -6,7 +6,7 @@ use std::{vec};
 use tokio::fs as t_fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
-use log::{info, warn, debug, error};
+use log::{debug};
 
 use crate::db::constants::{
     FILE_PATH_REGEX, LogicalColType, MAX_ALLOWED_METADATA_CHANGES, MAX_COL_COUNT, MAX_COL_NAME_LEN,

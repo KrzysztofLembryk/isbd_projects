@@ -1,5 +1,4 @@
 use crate::db::constants::{DB_DATA_DIR, MAINTENANCE_WORKER_QUERY_ID, MAINTENANCE_SAVE_META_TABLE_ID};
-use crate::db::manager::db_workers::maintenance_worker;
 use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, DbWorkerMsg, QueryFailureMsg};
 use crate::db::errors::DbError;
 use crate::schemas::error::MultipleProblemsError;
@@ -7,7 +6,7 @@ use crate::schemas::error::MultipleProblemsError;
 use std::path::Path;
 use uuid::Uuid;
 use tokio::{sync::mpsc::{UnboundedSender, unbounded_channel}, task::JoinError};
-use log::{info, warn, debug, error};
+use log::{debug, error};
 
 pub struct MaintenanceWorker
 {
@@ -96,7 +95,7 @@ impl MaintenanceWorker
                             // TODO: instead of unwrapping we should here send a message to db about internal db error
                         },
                         None => {
-                            debug!("Maintenance worker got None, other side of channel was closed, this happened before shutdown, DB CORRUPTED STATE");
+                            error!("Maintenance worker got None, other side of channel was closed, this happened before shutdown, DB CORRUPTED STATE");
                             break;
                         }
                     }
@@ -132,7 +131,7 @@ async fn delete_dir_with_contents(dir_path: &str) -> std::io::Result<()>
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     // Directory doesn't exist - this is fine for deletion
-                    debug!("Directory doesn't exist: '{:?}', no need to delete it, ignoring", dir_path);
+                    debug!("Directory doesn't exist: '{:?}', no need to delete it, IGNORING", dir_path);
                     return Ok(());
                 }
                 Err(e) => {

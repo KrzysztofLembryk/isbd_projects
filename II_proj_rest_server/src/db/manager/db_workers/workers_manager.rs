@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
-use crate::db::constants::{MAINTENANCE_WORKER_ID, MAINTENANCE_WORKER_QUERY_ID};
+use crate::db::constants::{MAINTENANCE_WORKER_ID};
 use crate::db::errors::DbError;
 use crate::db::manager::messages::{DbCmd, DbMaintenanceMsg, DbWorkerMsg, QueryData};
 use crate::db::manager::db_workers::maintenance_worker::MaintenanceWorker;
 use crate::db::manager::db_workers::query_worker::QueryWorker;
 
-use log::{info, warn, debug, error};
+use log::{debug};
 
 pub struct WorkersManager
 {

@@ -2,14 +2,15 @@ use serde;
 use std::fmt;
 use uuid::Uuid;
 
-const MB_1: usize = 1024 * 1024;
+const KB_1: usize = 1024;
+const MB_1: usize = KB_1 * KB_1;
 
 // ############################################################################
 // ############################ BUFFER SIZES ##################################
 // ############################################################################
 
 /// Size of buffer we read data into
-pub const BUF_SIZE: usize = 2 * MB_1; 
+pub const BUF_SIZE: usize = 64 * KB_1; 
 /// Number of rows we want to read in one go
 pub const BATCH_SIZE: usize = 3; 
 

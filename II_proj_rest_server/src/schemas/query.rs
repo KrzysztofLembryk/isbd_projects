@@ -1,4 +1,3 @@
-use crate::db::db_engine::DbEngine;
 use crate::db::errors::DbError;
 use crate::schemas::column::{DataColumn, Int64Column, VarcharColumn};
 use uuid::Uuid;

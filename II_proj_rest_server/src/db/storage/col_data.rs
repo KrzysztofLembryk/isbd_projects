@@ -2,19 +2,24 @@ use tokio::fs as tokio_fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, SeekFrom, AsyncSeekExt};
 use zstd;
 use std::collections::VecDeque;
-use std::result;
 
-use crate::db::constants::{LogicalColType, BATCH_SIZE, BUF_SIZE, DB_DATA_DIR, ZSTD_ENCODE_LEVEL};
+use crate::db::constants::{LogicalColType, BATCH_SIZE, BUF_SIZE, ZSTD_ENCODE_LEVEL};
 use crate::db::storage::encoders::{delta_encode, vle_encode_i, vle_encode_u, vle_decode_i, vle_decode_u};
 
 use crate::db::storage::col_header::ColHeader;
 use crate::db::errors::DbError;
 
-use log::{debug};
-
 #[cfg(test)]
 #[path = "../tests/storage/test_col_data.rs"]
 mod test_col_data;
+
+
+#[derive(PartialEq)]
+enum ReadStage 
+{
+    SizeStage,
+    DataStage
+}
 
 pub trait ColType 
 {
@@ -41,7 +46,6 @@ pub struct ColData<T: ColType>
     header: ColHeader,
     data: Vec<T>,
     n_rows: usize,
-    // result: ResType,
     file_handle: Option<tokio::fs::File>,
     first_time_saving: bool,
 }
@@ -378,14 +382,6 @@ impl ColData<i64>
         Ok(())
     }
 
-    // pub fn result(&self) -> f64
-    // {
-    //     match self.result
-    //     {
-    //         ResType::IntColRes(val) => val,
-    //         _ => panic!("ColData<i64> has not IntColRes as result type")
-    //     }
-    // }
     // ########################################################################
     // ############################ PRIVATE API ###############################
     // ########################################################################
@@ -458,13 +454,7 @@ impl ColData<String>
         let mut bytes_read;
         let mut buf_idx = 0;
 
-        let file_path = match remaining_files.pop_front()
-        {
-            Some(path) => path,
-            None => {
-                return Err(DbError::Other(format!("ColData<String>::read_from_file: provided queue of file_paths is empty")));
-            }
-        };
+        let file_path = pop_first_path(&mut remaining_files)?;
         let mut f = tokio_fs::File::open(file_path).await?;
 
         bytes_read = f.read(&mut buf).await?;
@@ -482,15 +472,7 @@ impl ColData<String>
         let mut bytes: Vec<u8> = Vec::new();
 
         let mut result_vec: Vec<String> = Vec::new();
-        // let mut ascii_count: usize = 0;
         let mut n_rows: usize = 0;
-
-        #[derive(PartialEq)]
-        enum ReadStage 
-        {
-            SizeStage,
-            DataStage
-        }
 
         let mut n_bytes: u32 = 0;
         let mut curr_stage = ReadStage::SizeStage;
@@ -525,41 +507,27 @@ impl ColData<String>
             bytes.push(*byte);
             n_bytes += 1;
 
-            if curr_stage == ReadStage::SizeStage
+            if curr_stage == ReadStage::SizeStage 
+            && n_bytes == nbr_of_size_bytes
             {
-                if n_bytes == nbr_of_size_bytes
-                {
-                    if bytes.len() != 4
-                    {
-                        panic!("sth went wrong, in bytes we don't have 4 bytes in buf, but {}", bytes.len());
-                    }
-
-                    // In bytes we should have only 4 bytes 
-                    zstd_frame_size = u32::from_be_bytes(bytes[..4].try_into().unwrap());
-                    n_bytes = 0;
-                    curr_stage = ReadStage::DataStage;
-
-                    bytes.clear();
-
-                }
+                ColData::<String>::handle_size_stage(
+                    &mut bytes, 
+                    &mut n_bytes, 
+                    &mut curr_stage, 
+                    &mut zstd_frame_size
+                );
             }
-            else 
+            else if n_bytes == zstd_frame_size
             {
                 // We can decode strings only when we have read exactly 
                 // zstd_frame_size bytes
-                if n_bytes == zstd_frame_size
-                {
-                    let decoded_strings = ColData::<String>::_zstd_decode(&bytes)?;
-                    // Each decoded string is a value for separate row
-                    n_rows += decoded_strings.len();
-                    result_vec.extend(decoded_strings);
-
-                    // After reading one full zstd frame, we again need to read
-                    // frame size, so we switch stage
-                    n_bytes = 0;
-                    curr_stage = ReadStage::SizeStage;
-                    bytes.clear();
-                }
+                ColData::<String>::handle_data_stage(
+                    &mut result_vec, 
+                    &mut bytes, 
+                    &mut n_bytes, 
+                    &mut n_rows, 
+                    &mut curr_stage
+                )?;
             }
 
             buf_idx += 1;
@@ -569,8 +537,7 @@ impl ColData<String>
             header: header,
             data: result_vec,
             n_rows: n_rows,
-            // result: ResType::StrColRes(ascii_count),
-            file_handle: None, // maybe better to store f?
+            file_handle: None, 
             first_time_saving: false,
         })
     }
@@ -594,14 +561,47 @@ impl ColData<String>
         Ok(())
     }
 
-    // pub fn result(&self) -> usize
-    // {
-    //     match self.result
-    //     {
-    //         ResType::StrColRes(val) => val,
-    //         _ => panic!("ColData<String> has not StrColRes as result type")
-    //     }
-    // }
+    fn handle_data_stage(
+        result_vec: &mut Vec<String>,
+        bytes: &mut Vec<u8>,
+        n_bytes: &mut u32,
+        n_rows: &mut usize,
+        curr_stage:  &mut ReadStage,
+    ) -> Result<(), DbError>
+    {
+        let decoded_strings = ColData::<String>::_zstd_decode(bytes)?;
+        // Each decoded string is a value for separate row
+        *n_rows += decoded_strings.len();
+        result_vec.extend(decoded_strings);
+
+        // After reading one full zstd frame, we again need to read
+        // frame size, so we switch stage
+        *n_bytes = 0;
+        *curr_stage = ReadStage::SizeStage;
+        bytes.clear();
+
+        return Ok(());
+    }
+
+    fn handle_size_stage(
+        bytes: &mut Vec<u8>,
+        n_bytes: &mut u32,
+        curr_stage:  &mut ReadStage,
+        zstd_frame_size: &mut u32,
+    )
+    {
+        if bytes.len() != 4
+        {
+            panic!("sth went wrong, in bytes we don't have 4 bytes in buf, but {}", bytes.len());
+        }
+
+        // In bytes we should have only 4 bytes 
+        *zstd_frame_size = u32::from_be_bytes(bytes[..4].try_into().unwrap());
+        *n_bytes = 0;
+        *curr_stage = ReadStage::DataStage;
+
+        bytes.clear();
+    }
 
     fn _zstd_decode(bytes: &[u8]) -> Result<Vec<String>, DbError>
     {
@@ -664,4 +664,16 @@ impl ColData<String>
 
         Ok(result)
     }
+}
+
+
+fn pop_first_path<'a>(remaining_files: &mut VecDeque<&'a str>) -> Result<&'a str, DbError>
+{
+    return match remaining_files.pop_front()
+    {
+        Some(path) => Ok(path),
+        None => {
+            Err(DbError::Other(format!("ColData<String>::read_from_file: provided queue of file_paths is empty")))
+        }
+    };
 }
