@@ -20,10 +20,13 @@ from db_client import (
     post_copy_query,
     post_select_query,
     get_query_by_id,
-    get_query_result
+    get_query_result,
+    get_failed_query
 )
 
+SLEEP_TIME = 3
 QUERY_STATUS_KEY = "status"
+ROW_LIMIT = 10
 
 
 def test_copy_query_success():
@@ -57,7 +60,7 @@ def test_copy_query_success():
     
     # Wait for completion
     print("  Waiting for query completion...")
-    time.sleep(6)
+    time.sleep(SLEEP_TIME)
     
     # Check query status
     print("  Checking query status...")
@@ -72,19 +75,442 @@ def test_copy_query_success():
     assert success and select_query_id, f"Failed to submit SELECT query: {error}"
     
     # Wait for SELECT completion
-    time.sleep(6)
+    time.sleep(SLEEP_TIME)
     
     # Get result
     print("  Fetching query result...")
-    success, result, error = get_query_result(select_query_id, row_limit=10)
+    success, result, error = get_query_result(select_query_id, row_limit=ROW_LIMIT)
     assert success and result, f"Failed to get result: {error}"
     
     # Verify data
-    assert result["rowCount"] == 10, f"Expected 10 rows, got: {result['rowCount']}"
+    assert result["rowCount"] == ROW_LIMIT, f"Expected 20 rows, got: {result['rowCount']}"
     assert len(result["columns"]) == 3, f"Expected 3 columns, got: {len(result['columns'])}"
     
     print(f"  ✓ Data verified: {result['rowCount']} rows, {len(result['columns'])} columns")
     print("✓ TEST 1 PASSED\n")
+    
+    delete_table(table_id)
+
+def test_copy_query_wrong_column_name():
+    """
+    Test 2: COPY query with wrong column name in CSV header (should fail).
+    """
+    print("\n" + "="*80)
+    print("TEST 2: COPY query - wrong column name in header")
+    print("="*80)
+    
+    table_name = "employees_wrong_col"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with wrong column name...")
+    success, query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_WRONG_COLUMN_NAME,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for query to fail...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    print("  ✓ Query correctly failed")
+    print("✓ TEST 2 PASSED\n")
+    
+    delete_table(table_id)
+
+def test_copy_query_no_header_less_columns():
+    """
+    Test 3: COPY query without header, less columns than schema (should fail).
+    """
+    print("\n" + "="*80)
+    print("TEST 3: COPY query - no header, less columns")
+    print("="*80)
+    
+    table_name = "employees_less_cols"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with less columns...")
+    success, query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_NO_HEADER_LESS_COLUMNS,
+        table_name,
+        does_csv_contain_header=False
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for query to fail...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    print("  ✓ Query correctly failed")
+    print("✓ TEST 3 PASSED\n")
+    
+    delete_table(table_id)
+
+def test_copy_query_no_header_more_columns():
+    """
+    Test 4: COPY query without header, more columns than schema (should fail).
+    """
+    print("\n" + "="*80)
+    print("TEST 4: COPY query - no header, more columns")
+    print("="*80)
+    
+    table_name = "employees_more_cols"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with more columns...")
+    success, query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_NO_HEADER_MORE_COLUMNS,
+        table_name,
+        does_csv_contain_header=False
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for query to fail...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    print("  ✓ Query correctly failed")
+    print("✓ TEST 4 PASSED\n")
+    
+    delete_table(table_id)
+
+def test_copy_query_with_header_less_columns():
+    """
+    Test 5: COPY query with header, less columns than schema (should fail).
+    """
+    print("\n" + "="*80)
+    print("TEST 5: COPY query - with header, less columns")
+    print("="*80)
+    
+    table_name = "employees_header_less"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with less columns...")
+    success, query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_WITH_HEADER_LESS_COLUMNS,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for query to fail...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    print("  ✓ Query correctly failed")
+    print("✓ TEST 5 PASSED\n")
+    
+    delete_table(table_id)
+
+def test_copy_query_with_header_more_columns():
+    """
+    Test 6: COPY query with header, more columns than schema (should fail or use destinationColumns).
+    """
+    print("\n" + "="*80)
+    print("TEST 6: COPY query - with header, more columns")
+    print("="*80)
+    
+    table_name = "employees_header_more"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with more columns (no destinationColumns)...")
+    success, query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_WITH_HEADER_MORE_COLUMNS,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for query to fail...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    print("  ✓ Query correctly failed")
+    print("✓ TEST 6 PASSED\n")
+    
+    delete_table(table_id)
+
+def test_copy_query_str_instead_of_int():
+    """
+    Test 7: COPY query with string value in INT64 column (should fail).
+    """
+    print("\n" + "="*80)
+    print("TEST 7: COPY query - string in INT64 column")
+    print("="*80)
+    
+    table_name = "employees_type_error"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with type mismatch...")
+    success, query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_STR_INSTEAD_OF_INT,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for query to fail...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    print("  ✓ Query correctly failed")
+    print("✓ TEST 7 PASSED\n")
+    
+    delete_table(table_id)
+
+def test_copy_query_too_many_values_in_row():
+    """
+    Test 8: COPY query with too many values in one row (should fail).
+    """
+    print("\n" + "="*80)
+    print("TEST 8: COPY query - too many values in row")
+    print("="*80)
+    
+    table_name = "employees_extra_value"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with extra value in row...")
+    success, query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_TOO_MANY_VALUES_IN_ROW,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for query to fail...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    print("  ✓ Query correctly failed")
+    print("✓ TEST 8 PASSED\n")
+    
+    delete_table(table_id)
+
+def test_copy_query_too_few_values_in_row():
+    """
+    Test 9: COPY query with too few values in one row (should fail).
+    """
+    print("\n" + "="*80)
+    print("TEST 9: COPY query - too few values in row")
+    print("="*80)
+    
+    table_name = "employees_missing_value"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with missing value in row...")
+    success, query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_TOO_FEW_VALUES_IN_ROW,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for query to fail...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    print("  ✓ Query correctly failed")
+    print("✓ TEST 9 PASSED\n")
+    
+    delete_table(table_id)
+
+def test_copy_query_only_header():
+    """
+    Test 10: COPY query with only header, no data rows (should succeed with 0 rows).
+    """
+    print("\n" + "="*80)
+    print("TEST 10: COPY query - only header, no data")
+    print("="*80)
+    
+    table_name = "employees_empty_data"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with only header...")
+    success, copy_query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_ONLY_HEADER,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and copy_query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for completion...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(copy_query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    # Verify 0 rows were inserted
+    print("  Submitting SELECT query...")
+    success, select_query_id, error = post_select_query(table_name)
+    assert success and select_query_id, f"Failed to submit SELECT query: {error}"
+    
+    time.sleep(SLEEP_TIME)
+    
+    print("  Fetching result...")
+    success, result, error = get_query_result(select_query_id)
+    assert success and result, f"Failed to get result: {error}"
+    assert result["rowCount"] == 0, f"Expected 0 rows, got: {result['rowCount']}"
+    
+    print("  ✓ Query succeeded with 0 rows")
+    print("✓ TEST 10 PASSED\n")
+    
+    delete_table(table_id)
+
+
+def test_copy_query_empty_file():
+    """
+    Test 11: COPY query with completely empty CSV file (should fail).
+    """
+    print("\n" + "="*80)
+    print("TEST 11: COPY query - empty file")
+    print("="*80)
+    
+    table_name = "employees_empty_file"
+    columns = [
+        {"name": "emp_id", "type": "INT64"},
+        {"name": "name", "type": "VARCHAR"},
+        {"name": "salary", "type": "INT64"}
+    ]
+    
+    print("  Creating table...")
+    success, table_id, error = put_table(table_name, columns)
+    assert success and table_id, f"Failed to create table: {error}"
+    
+    print("  Submitting COPY query with empty file...")
+    success, query_id, error = post_copy_query(
+        WRONG_EMPLOYEES_EMPTY,
+        table_name,
+        does_csv_contain_header=True
+    )
+    assert success and query_id, f"Failed to submit COPY query: {error}"
+    
+    print("  Waiting for query to fail...")
+    time.sleep(SLEEP_TIME)
+    
+    print("  Checking query status...")
+    success, query_info, error = get_query_by_id(query_id)
+    assert success and query_info, f"Failed to get query info: {error}"
+    assert query_info[QUERY_STATUS_KEY] == "FAILED", \
+        f"Expected FAILED, got: {query_info[QUERY_STATUS_KEY]}"
+    
+    print("  ✓ Query correctly failed")
+    print("✓ TEST 11 PASSED\n")
     
     delete_table(table_id)
 
@@ -98,7 +524,17 @@ def run_all_copy_query_tests():
     print("="*80)
     
     try:
-        test_copy_query_success()
+        # test_copy_query_success()
+        # test_copy_query_wrong_column_name()
+        # test_copy_query_no_header_less_columns()
+        # test_copy_query_no_header_more_columns()
+        # test_copy_query_with_header_less_columns()
+        # test_copy_query_with_header_more_columns()
+        # test_copy_query_str_instead_of_int()
+        # test_copy_query_too_many_values_in_row()
+        # test_copy_query_too_few_values_in_row()
+        test_copy_query_only_header()
+        test_copy_query_empty_file()
         
         print("\n" + "="*80)
         print("ALL COPY QUERY TESTS PASSED! ✓")

@@ -19,10 +19,16 @@ struct QueryBody {
 #[get("/result/{query_id}")]
 async fn get_query_result(
     query_id: web::Path<Uuid>,
-    query_body: web::Json<QueryBody>,
+    query_body: Option<web::Json<QueryBody>>,
     db_client: web::Data<tokio::sync::RwLock<DbClient>>
 ) -> impl Responder
 {
+    // default if no body provided
+    let query_body = query_body.map(|b| b.into_inner()).unwrap_or(QueryBody {
+        row_limit: 0,
+        flush_result: false,
+    });
+    
     info!("Fetching result for query: '{}', with row limit: '{}' and flush set to: '{}' ", query_id, query_body.row_limit, query_body.flush_result);
 
     if query_body.row_limit < 0 

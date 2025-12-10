@@ -265,7 +265,7 @@ impl DbMetadata {
         if self.table_name_to_id_map.contains_key(table_schema.name())
         {
             return Err(DbError::InvalidName(format!(
-                "DbMetadata::put_table: our db contains given table with given name: '{}'",
+                "DbMetadata::put_table: our db already contains table with name: '{}'",
                 table_schema.name()
             )));
         }

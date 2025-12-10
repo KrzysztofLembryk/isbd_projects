@@ -288,6 +288,12 @@ impl QueryWorker
             }
         }
 
+        if row_count == 0
+        {
+            return Err(DbError::CsvError(
+                format!("Loading csv for table: {}, provided csv has 0 rows, we do not accept such csvs in COPY query, provide some data", table_meta.table_name())
+            ));
+        }
         // Last batch might not be equal to BATCH_SIZE thus we need to check it
         // and if it isnt we need to save it since loop didnt do it
         if row_count as usize % BATCH_SIZE != 0

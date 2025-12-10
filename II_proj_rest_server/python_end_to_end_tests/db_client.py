@@ -237,6 +237,41 @@ def post_query(query_definition: Dict) -> Tuple[bool, Optional[str], Optional[st
         print(f"✗ Error submitting query: {e}")
         return False, None, str(e)
 
+def get_failed_query(query_id: str) -> Tuple[bool, Optional[Dict], Optional[str]]:
+    """
+    Get error details of a failed query.
+    
+    Args:
+        query_id: ID of the failed query
+    
+    Returns:
+        tuple: (success: bool, error_details: Dict or None, error_msg: str or None)
+    """
+    url = f"{SERVER_URL}/error/{query_id}"
+    
+    try:
+        response = requests.get(url)
+        
+        if response.status_code == 200:
+            error_details = response.json()
+            print(f"✓ Retrieved error details for query ID: {query_id}")
+            return True, error_details, None
+        elif response.status_code == 404:
+            error_msg = response.json().get(ERROR_KEY, "Query not found")
+            print(f"✗ Query not found: {error_msg}")
+            return False, None, error_msg
+        elif response.status_code == 400:
+            error_msg = response.json().get(ERROR_KEY, "Query is not in FAILED state")
+            print(f"✗ Error details not available: {error_msg}")
+            return False, None, error_msg
+        else:
+            error_msg = response.json().get(ERROR_KEY, "Unknown error")
+            print(f"✗ Failed to get error details: {error_msg}")
+            return False, None, error_msg
+            
+    except Exception as e:
+        print(f"✗ Error getting failed query details: {e}")
+        return False, None, str(e)
 
 def get_query_result(
         query_id: str, 
